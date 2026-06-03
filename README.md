@@ -32,12 +32,12 @@
 
 ```mermaid
 graph TD
-    Client[客户端 (OpenAI/Anthropic SDK)] -- 1. 发送带 tools 的请求 --> TB[ToolBridge 代理]
-    TB -- 2. 注入 System Preamble & 激活标记 --> Upstream[上游大模型 API (不支持原生 Tools)]
+    Client["客户端 (OpenAI/Anthropic SDK)"] -- 1. 发送带 tools 的请求 --> TB[ToolBridge 代理]
+    TB -- 2. 注入 System Preamble & 激活标记 --> Upstream["上游大模型 API (不支持原生 Tools)"]
     Upstream -- 3. 返回流式文本 / 带有思考过程 --> SS[SSE 状态机 TriggerScanner]
     SS -- 4a. 纯文本数据流 --> Client
     SS -- 4b. 检测到激活标记 & 拦截工具块参数 --> Parser[工具解析器]
-    Parser -- 5a. 解析成功 --> Format[格式化为标准 tool_calls / tool_use] --> Client
+    Parser -- 5a. 解析成功 --> Format["格式化为标准 tool_calls / tool_use"] --> Client
     Parser -- 5b. 解析损坏/截断 & 开启重试 --> TB
 ```
 
