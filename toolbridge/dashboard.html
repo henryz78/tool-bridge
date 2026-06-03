@@ -867,6 +867,16 @@
         let upstreamsList = [];
         let modelRoutesMap = {};
 
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
         // Tab system
         function switchTab(tabId) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -895,10 +905,17 @@
             toast.className = `toast toast-${type}`;
             
             const icon = type === 'success' ? '✓' : type === 'warning' ? '⚠' : '✗';
-            toast.innerHTML = `
-                <div class="toast-icon">${icon}</div>
-                <div class="toast-text">${message}</div>
-            `;
+            
+            const iconEl = document.createElement('div');
+            iconEl.className = 'toast-icon';
+            iconEl.textContent = icon;
+            
+            const textEl = document.createElement('div');
+            textEl.className = 'toast-text';
+            textEl.textContent = message;
+            
+            toast.appendChild(iconEl);
+            toast.appendChild(textEl);
             
             container.appendChild(toast);
             setTimeout(() => toast.classList.add('show'), 50);
@@ -1027,15 +1044,26 @@
             upstreamsList.forEach((p, idx) => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td style="font-weight: 500; color: #fff;">${p.id}</td>
-                    <td>${p.name}</td>
-                    <td style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary);">${p.url}</td>
-                    <td>${p.timeout}</td>
+                    <td style="font-weight: 500; color: #fff;" class="prov-id"></td>
+                    <td class="prov-name"></td>
+                    <td style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary);" class="prov-url"></td>
+                    <td class="prov-timeout"></td>
                     <td style="text-align: right;">
-                        <button type="button" class="action-btn edit" onclick="showProviderForm(${idx})">✏️</button>
-                        <button type="button" class="action-btn delete" onclick="deleteProviderLocal(${idx})">🗑️</button>
+                        <button type="button" class="action-btn edit">✏️</button>
+                        <button type="button" class="action-btn delete">🗑️</button>
                     </td>
                 `;
+                tr.querySelector('.prov-id').textContent = p.id;
+                tr.querySelector('.prov-name').textContent = p.name;
+                tr.querySelector('.prov-url').textContent = p.url;
+                tr.querySelector('.prov-timeout').textContent = p.timeout;
+                
+                tr.querySelector('.edit').addEventListener('click', () => {
+                    showProviderForm(idx);
+                });
+                tr.querySelector('.delete').addEventListener('click', () => {
+                    deleteProviderLocal(idx);
+                });
                 tbody.appendChild(tr);
             });
         }
@@ -1088,14 +1116,23 @@
                 const prov = upstreamsList.find(p => p.id === provId);
                 const provUrl = prov ? prov.url : '（未知或已失效的上游服务商）';
                 const tr = document.createElement('tr');
+                
                 tr.innerHTML = `
-                    <td style="font-weight: 500; color: #fff; font-family: 'Fira Code', monospace;">${modelName}</td>
-                    <td><span style="background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59,130,246,0.3); padding: 2px 8px; border-radius: 4px; color: #60a5fa; font-size: 12px;">${provId}</span></td>
-                    <td style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary);">${provUrl}</td>
+                    <td style="font-weight: 500; color: #fff; font-family: 'Fira Code', monospace;" class="route-model-name"></td>
+                    <td><span style="background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59,130,246,0.3); padding: 2px 8px; border-radius: 4px; color: #60a5fa; font-size: 12px;" class="route-prov-id"></span></td>
+                    <td style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary);" class="route-prov-url"></td>
                     <td style="text-align: right;">
-                        <button type="button" class="action-btn delete" onclick="deleteRouteLocal('${modelName}')">🗑️</button>
+                        <button type="button" class="action-btn delete">🗑️</button>
                     </td>
                 `;
+                
+                tr.querySelector('.route-model-name').textContent = modelName;
+                tr.querySelector('.route-prov-id').textContent = provId;
+                tr.querySelector('.route-prov-url').textContent = provUrl;
+                
+                tr.querySelector('.delete').addEventListener('click', () => {
+                    deleteRouteLocal(modelName);
+                });
                 tbody.appendChild(tr);
             });
         }
@@ -1197,9 +1234,11 @@
                             }
                             
                             card.innerHTML = `
-                                <span class="widget-title" style="font-size: 10px; font-weight: 600;">上游: [${p.name}]</span>
-                                <span class="widget-value" style="font-size: 18px; color: ${latColor}">${latText}</span>
+                                <span class="widget-title lat-title" style="font-size: 10px; font-weight: 600; display: block;"></span>
+                                <span class="widget-value lat-val" style="font-size: 18px; color: ${latColor}; display: block;"></span>
                             `;
+                            card.querySelector('.lat-title').textContent = `上游: [${p.name}]`;
+                            card.querySelector('.lat-val').textContent = latText;
                             latencyGrid.appendChild(card);
                         });
                     }

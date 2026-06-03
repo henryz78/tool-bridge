@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -25,9 +26,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        import urllib.parse
+        clean_path = urllib.parse.urlparse(self.path).path
+        if not clean_path.startswith("/api/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
 
     def do_GET(self) -> None:
@@ -39,6 +43,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else None
+        if body:
+            self.rfile = io.BytesIO(body)
         dispatch(self, self.server.settings, "POST", self.path, body)
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -71,6 +77,7 @@ def run_server(settings: Settings) -> None:
 # Threaded server management (for GUI mode)
 # ---------------------------------------------------------------------------
 
+_server_lock = threading.Lock()
 _server_instance: BridgeServer | None = None
 _server_thread: threading.Thread | None = None
 
@@ -78,14 +85,21 @@ _server_thread: threading.Thread | None = None
 def start_server_threaded(settings: Settings) -> None:
     """Start the server in a daemon thread. Safe to call from any thread."""
     global _server_instance, _server_thread
-    stop_server()
-    _server_instance = create_server(settings)
-    _server_thread = threading.Thread(target=_server_instance.serve_forever, daemon=True)
-    _server_thread.start()
+    with _server_lock:
+        stop_server_unlocked()
+        _server_instance = create_server(settings)
+        _server_thread = threading.Thread(target=_server_instance.serve_forever, daemon=True)
+        _server_thread.start()
 
 
 def stop_server() -> None:
     """Stop the running server if any."""
+    with _server_lock:
+        stop_server_unlocked()
+
+
+def stop_server_unlocked() -> None:
+    """Stop the running server if any (unsafe/unlocked)."""
     global _server_instance, _server_thread
     if _server_instance is not None:
         _server_instance.shutdown()
@@ -95,10 +109,12 @@ def stop_server() -> None:
 
 
 def is_server_running() -> bool:
-    return _server_instance is not None
+    with _server_lock:
+        return _server_instance is not None
 
 
 def get_server_port() -> int | None:
-    if _server_instance is not None:
-        return _server_instance.settings.listen_port
-    return None
+    with _server_lock:
+        if _server_instance is not None:
+            return _server_instance.settings.listen_port
+        return None

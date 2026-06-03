@@ -61,7 +61,10 @@ def _win_enable() -> None:
         import os
         if os.path.isfile(pythonw):
             exe = pythonw
-    cmd = f'"{exe}" -m toolbridge --desktop'
+    if getattr(sys, "frozen", False):
+        cmd = f'"{exe}" --desktop'
+    else:
+        cmd = f'"{exe}" -m toolbridge --desktop'
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _win_key_path(), 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, _APP_NAME, 0, winreg.REG_SZ, cmd)
 
@@ -92,9 +95,13 @@ def _mac_is_enabled() -> bool:
 def _mac_enable() -> None:
     import plistlib
     from pathlib import Path
+    if getattr(sys, "frozen", False):
+        args = [sys.executable, "--desktop"]
+    else:
+        args = [sys.executable, "-m", "toolbridge", "--desktop"]
     plist = {
         "Label": _LABEL,
-        "ProgramArguments": [sys.executable, "-m", "toolbridge", "--desktop"],
+        "ProgramArguments": args,
         "RunAtLoad": True,
         "KeepAlive": False,
     }
@@ -129,11 +136,15 @@ def _linux_enable() -> None:
     from pathlib import Path
     path = Path(_linux_desktop_path())
     path.parent.mkdir(parents=True, exist_ok=True)
+    if getattr(sys, "frozen", False):
+        exec_cmd = f'"{sys.executable}" --desktop'
+    else:
+        exec_cmd = f'"{sys.executable}" -m toolbridge --desktop'
     content = (
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=ToolBridge\n"
-        f"Exec={sys.executable} -m toolbridge --desktop\n"
+        f"Exec={exec_cmd}\n"
         "Hidden=false\n"
         "NoDisplay=false\n"
         "X-GNOME-Autostart-enabled=true\n"

@@ -26,8 +26,8 @@ class ScanResult:
     prefix_text: str
 
 
-_THINK_OPEN_RE = re.compile(r"<thinking>", re.IGNORECASE)
-_THINK_CLOSE_RE = re.compile(r"</thinking>", re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<(thinking|think)>", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</(thinking|think)>", re.IGNORECASE)
 
 
 class TriggerScanner:
@@ -213,6 +213,18 @@ def read_sse_chunks(response: Any) -> Generator[dict, None, None]:
             data_str = "\n".join(data_lines)
             if data_str:
                 yield {"event": event_type, "data": data_str}
+
+    if buf.strip():
+        event_type = "message"
+        data_lines: list[str] = []
+        for line in buf.split("\n"):
+            if line.startswith("event:"):
+                event_type = line[6:].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[5:])
+        data_str = "\n".join(data_lines)
+        if data_str:
+            yield {"event": event_type, "data": data_str}
 
 
 # ---------------------------------------------------------------------------

@@ -124,7 +124,7 @@ _FALLBACK_RE = re.compile(
 )
 
 
-def parse_tool_invocation(text: str, marker: str) -> ParseOutcome:
+def parse_tool_invocation(text: str, marker: str, valid_names: list[str] | None = None) -> ParseOutcome:
     """Parse the model output looking for the marker and the tool block."""
     cleaned = _strip_think_blocks(text)
 
@@ -157,7 +157,7 @@ def parse_tool_invocation(text: str, marker: str) -> ParseOutcome:
         pass
 
     # Fallback: regex extraction from malformed JSON
-    invocations = _fallback_extract(json_text)
+    invocations = _fallback_extract(json_text, valid_names)
     if invocations:
         return ParseOutcome(text_before_marker=pre or None, invocations=invocations)
 
@@ -176,25 +176,55 @@ def _extract_invocations(items: list) -> list[ToolInvocation]:
     return result
 
 
-def _fallback_extract(text: str) -> list[ToolInvocation]:
+def _extract_balanced_braces(text: str, start_index: int) -> str | None:
+    """Find the balanced closing brace for a brace starting at text[start_index]."""
+    if start_index >= len(text) or text[start_index] != '{':
+        return None
+    brace_count = 0
+    in_string = False
+    escape = False
+    for i in range(start_index, len(text)):
+        char = text[i]
+        if escape:
+            escape = False
+            continue
+        if char == '\\':
+            escape = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if not in_string:
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    return text[start_index:i+1]
+    return None
+
+
+def _fallback_extract(text: str, valid_names: list[str] | None = None) -> list[ToolInvocation]:
     """Attempt regex-based extraction when JSON parsing fails."""
     invocations: list[ToolInvocation] = []
     # Try to find {"name": "...", ...} patterns
     name_pattern = re.compile(r'"name"\s*:\s*"([^"]+)"')
     for m in name_pattern.finditer(text):
         name = m.group(1)
+        if valid_names is not None and name not in valid_names:
+            continue
         # Try to find a params/parameters object following the name
         after = text[m.end():]
         params = {}
-        params_match = re.search(
-            r'"(?:params|parameters|arguments)"\s*:\s*(\{[^}]*\})',
-            after[:500],
-        )
-        if params_match:
-            try:
-                params = json.loads(params_match.group(1))
-            except json.JSONDecodeError:
-                params = {}
+        match = re.search(r'"(?:params|parameters|arguments)"\s*:\s*(\{)', after[:500])
+        if match:
+            brace_start = m.end() + match.start(1)
+            braces_content = _extract_balanced_braces(text, brace_start)
+            if braces_content:
+                try:
+                    params = json.loads(braces_content)
+                except json.JSONDecodeError:
+                    params = {}
         invocations.append(ToolInvocation(name=name, parameters=params))
     return invocations
 
@@ -275,7 +305,8 @@ def retry_parse(
         prior_text = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
 
         try:
-            outcome = parse_tool_invocation(prior_text, marker)
+            valid_names = [t["function"]["name"] for t in tools]
+            outcome = parse_tool_invocation(prior_text, marker, valid_names)
             if outcome.invocations:
                 return outcome
         except ParseError:
@@ -313,11 +344,13 @@ def validate_tool_params(invocations: list[ToolInvocation], tool_schemas: list[d
 # ---------------------------------------------------------------------------
 
 _THINK_BLOCK_RE = re.compile(r"科学研究院.*?科院", re.DOTALL | re.IGNORECASE)
-_THINKING_TAG_RE = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
+_THINKING_TAG_RE = re.compile(r"<(thinking|think)>.*?</(thinking|think)>", re.DOTALL | re.IGNORECASE)
+_UNCLOSED_THINK_RE = re.compile(r"<(thinking|think)>.*", re.DOTALL | re.IGNORECASE)
 
 
 def _strip_think_blocks(text: str) -> str:
-    """Remove 科学研究院...科院 and <thinking>...</thinking> blocks."""
+    """Remove 科学研究院...科院, <thinking>...</thinking> and unclosed think blocks."""
     text = _THINK_BLOCK_RE.sub("", text)
     text = _THINKING_TAG_RE.sub("", text)
+    text = _UNCLOSED_THINK_RE.sub("", text)
     return text

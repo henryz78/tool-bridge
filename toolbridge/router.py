@@ -19,7 +19,7 @@ from .virtual_tools import (
     FailureKind,
     ToolInvocation,
 )
-from .proxy import fetch_upstream, fetch_upstream_chat, stream_upstream_chat
+from .proxy import fetch_upstream, fetch_upstream_chat
 from .sse import (
     TriggerScanner,
     read_sse_chunks,
@@ -71,6 +71,9 @@ def handle_chat(handler: Any, settings: Settings) -> None:
         _send_json(handler, 400, {"error": "invalid JSON body"})
         return
 
+    if settings.upstream_extra_fields:
+        body = {**settings.upstream_extra_fields, **body}
+
     requested_model = body.get("model", "")
     resolved = settings.resolve_model_name(requested_model)
     if resolved is None:
@@ -92,14 +95,34 @@ def handle_chat(handler: Any, settings: Settings) -> None:
 
 def _passthrough_chat(handler: Any, body: dict, stream: bool, settings: Settings) -> None:
     if stream:
-        resp = stream_upstream_chat(body, settings)
-        begin_sse_response(handler)
-        while True:
-            chunk = resp.read(4096)
-            if not chunk:
-                break
-            handler.wfile.write(chunk)
-            handler.wfile.flush()
+        from .proxy import open_upstream_connection, build_upstream_headers, _parse_url
+        model = body.get("model", "")
+        url, auth, timeout = settings.get_upstream_config(model)
+        conn = open_upstream_connection(settings, url=url, timeout=timeout)
+        try:
+            _, _, base = _parse_url(url)
+            path = base + "/v1/chat/completions"
+            raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            headers = build_upstream_headers(None, settings, auth=auth)
+            conn.request("POST", path, body=raw_body, headers=headers)
+            resp = conn.getresponse()
+            if resp.status != 200:
+                err_body = resp.read()
+                try:
+                    err_json = json.loads(err_body.decode("utf-8", errors="replace"))
+                except Exception:
+                    err_json = {"error": err_body.decode("utf-8", errors="replace")}
+                _send_json(handler, resp.status, err_json, cors=True)
+                return
+            begin_sse_response(handler)
+            while True:
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                handler.wfile.flush()
+        finally:
+            conn.close()
     else:
         result = fetch_upstream_chat(body, settings)
         _send_json(handler, 200, result)
@@ -135,8 +158,9 @@ def _nonstream_virtual_tool_call(
     result = fetch_upstream_chat(body, settings)
     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
+    valid_names = [t["function"]["name"] for t in tools]
     try:
-        outcome = parse_tool_invocation(content, marker)
+        outcome = parse_tool_invocation(content, marker, valid_names)
     except ParseError:
         outcome = None
 
@@ -147,7 +171,7 @@ def _nonstream_virtual_tool_call(
 
     # Retry
     if settings.retry_on_parse_failure:
-        outcome = _retry_virtual_parse(content, marker, tools, body.get("messages", []), settings)
+        outcome = _retry_virtual_parse(content, marker, tools, body.get("messages", []), body["model"], settings)
         if outcome and outcome.invocations:
             response = _build_openai_tool_response(body["model"], outcome, settings)
             _send_json(handler, 200, response)
@@ -167,84 +191,94 @@ def _stream_virtual_tool_call(
     url, auth, timeout = settings.get_upstream_config(model)
 
     conn = open_upstream_connection(settings, url=url, timeout=timeout)
-    parsed = urllib.parse.urlparse(url)
-    base_path = parsed.path.rstrip("/")
-    path = base_path + "/v1/chat/completions"
+    try:
+        parsed = urllib.parse.urlparse(url)
+        base_path = parsed.path.rstrip("/")
+        path = base_path + "/v1/chat/completions"
 
-    raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    headers = build_upstream_headers(None, settings, auth=auth)
-    conn.request("POST", path, body=raw_body, headers=headers)
-    resp = conn.getresponse()
+        raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers = build_upstream_headers(None, settings, auth=auth)
+        conn.request("POST", path, body=raw_body, headers=headers)
+        resp = conn.getresponse()
+        if resp.status != 200:
+            err_body = resp.read()
+            try:
+                err_json = json.loads(err_body.decode("utf-8", errors="replace"))
+            except Exception:
+                err_json = {"error": err_body.decode("utf-8", errors="replace")}
+            _send_json(handler, resp.status, err_json, cors=True)
+            return
 
-    scanner = TriggerScanner(marker)
-    all_content = ""
-    marker_found = False
-    post_marker_buf = ""  # content after marker, buffered for tool parsing
-    base_chunk = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion.chunk",
-        "model": body.get("model", ""),
-    }
+        scanner = TriggerScanner(marker)
+        all_content = ""
+        marker_found = False
+        post_marker_buf = ""  # content after marker, buffered for tool parsing
+        base_chunk = {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion.chunk",
+            "model": body.get("model", ""),
+        }
 
-    begin_sse_response(handler)
+        begin_sse_response(handler)
 
-    for sse_event in read_sse_chunks(resp):
-        data = sse_event.get("data", "")
-        if data == "[DONE]":
-            break
-        try:
-            parsed_chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
+        for sse_event in read_sse_chunks(resp):
+            data = sse_event.get("data", "")
+            if data == "[DONE]":
+                break
+            try:
+                parsed_chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
 
-        delta_content = ""
-        for choice in parsed_chunk.get("choices", []):
-            delta = choice.get("delta", {})
-            if "content" in delta:
-                delta_content += delta["content"]
-            # Check for finish_reason from upstream
-            finish = choice.get("finish_reason")
+            delta_content = ""
+            for choice in parsed_chunk.get("choices", []):
+                delta = choice.get("delta", {})
+                if "content" in delta:
+                    delta_content += delta["content"]
+                # Check for finish_reason from upstream
+                finish = choice.get("finish_reason")
 
-        if delta_content:
-            all_content += delta_content
+            if delta_content:
+                all_content += delta_content
 
-            if marker_found:
-                # After marker: buffer for tool call parsing, don't emit
-                post_marker_buf += delta_content
-            else:
-                # Before marker: scan and emit real-time text deltas
-                scan_result = scanner.feed(delta_content)
-                if scan_result.prefix_text:
-                    emit_openai_text_delta(handler, base_chunk, scan_result.prefix_text)
-                if scanner.found:
-                    marker_found = True
-                    # Emit any text before marker as final text delta
+                if marker_found:
+                    # After marker: buffer for tool call parsing, don't emit
+                    post_marker_buf += delta_content
+                else:
+                    # Before marker: scan and emit real-time text deltas
+                    scan_result = scanner.feed(delta_content)
                     if scan_result.prefix_text:
-                        pass  # already emitted above
-                    # Content accumulated in scanner after marker
-                    post_marker_buf = scanner.accumulated
+                        emit_openai_text_delta(handler, base_chunk, scan_result.prefix_text)
+                    if scanner.found:
+                        marker_found = True
+                        # Content accumulated in scanner after marker
+                        post_marker_buf = scanner.accumulated
 
-    # Stream complete — decide what to emit
-    if marker_found:
-        # Try to parse tool invocations from the full content
-        try:
-            outcome = parse_tool_invocation(all_content, marker)
-        except ParseError:
-            outcome = None
+        valid_names = [t["function"]["name"] for t in tools]
+        # Stream complete — decide what to emit
+        if marker_found:
+            # Try to parse tool invocations from the full content
+            try:
+                outcome = parse_tool_invocation(all_content, marker, valid_names)
+            except ParseError:
+                outcome = None
 
-        if outcome and outcome.invocations:
-            tool_calls = _invocations_to_openai_calls(outcome.invocations)
-            emit_openai_tool_call_delta(handler, base_chunk, tool_calls)
+            if outcome and outcome.invocations:
+                tool_calls = _invocations_to_openai_calls(outcome.invocations)
+                emit_openai_tool_call_delta(handler, base_chunk, tool_calls)
+            else:
+                # Marker found but no valid tool calls — emit remaining text
+                if post_marker_buf:
+                    emit_openai_text_delta(handler, base_chunk, post_marker_buf)
         else:
-            # Marker found but no valid tool calls — emit remaining text
-            if post_marker_buf:
-                emit_openai_text_delta(handler, base_chunk, post_marker_buf)
-    else:
-        # No marker found — emit any buffered text from scanner
-        if scanner.pending_prefix:
-            emit_openai_text_delta(handler, base_chunk, scanner.pending_prefix)
+            # No marker found — emit any buffered text from scanner
+            remaining = scanner.pending_prefix + scanner.accumulated
+            if remaining:
+                emit_openai_text_delta(handler, base_chunk, remaining)
 
-    emit_openai_done(handler)
+        emit_openai_done(handler)
+    finally:
+        conn.close()
 
 
 def _build_openai_tool_response(model: str, outcome: Any, settings: Settings) -> dict:
@@ -284,10 +318,15 @@ def _invocations_to_openai_calls(invocations: list[ToolInvocation]) -> list[dict
 
 
 def _retry_virtual_parse(
-    prior_text: str, marker: str, tools: list[dict], messages: list[dict], settings: Settings,
+    prior_text: str,
+    marker: str,
+    tools: list[dict],
+    messages: list[dict],
+    resolved_model: str,
+    settings: Settings,
 ) -> Any:
     from .virtual_tools import retry_parse
-    return retry_parse(prior_text, marker, tools, messages, settings)
+    return retry_parse(prior_text, marker, tools, messages, resolved_model, settings)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +340,9 @@ def handle_anthropic(handler: Any, settings: Settings) -> None:
         return
 
     openai_payload = convert_anthropic_to_openai(body)
+    if settings.upstream_extra_fields:
+        openai_payload = {**settings.upstream_extra_fields, **openai_payload}
+
     requested_model = body.get("model", "")
     resolved = settings.resolve_model_name(requested_model)
     if resolved is None:
@@ -335,17 +377,18 @@ def handle_anthropic(handler: Any, settings: Settings) -> None:
     openai_payload["messages"] = messages
     openai_payload["stream"] = False
 
+    valid_names = [t["function"]["name"] for t in openai_tools]
     result = fetch_upstream_chat(openai_payload, settings)
     content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     try:
-        outcome = parse_tool_invocation(content, marker)
+        outcome = parse_tool_invocation(content, marker, valid_names)
     except ParseError:
         outcome = None
 
     if not outcome or not outcome.invocations:
         if settings.retry_on_parse_failure:
-            outcome = _retry_virtual_parse(content, marker, openai_tools, openai_payload.get("messages", []), settings)
+            outcome = _retry_virtual_parse(content, marker, openai_tools, openai_payload.get("messages", []), requested_model, settings)
 
     # Build Anthropic response directly from parsed outcome
     if outcome and outcome.invocations:
@@ -393,92 +436,104 @@ def _passthrough_anthropic_stream(
     url, auth, timeout = settings.get_upstream_config(model)
 
     conn = open_upstream_connection(settings, url=url, timeout=timeout)
-    parsed = urllib.parse.urlparse(url)
-    base_path = parsed.path.rstrip("/")
-    path = base_path + "/v1/chat/completions"
+    try:
+        parsed = urllib.parse.urlparse(url)
+        base_path = parsed.path.rstrip("/")
+        path = base_path + "/v1/chat/completions"
 
-    raw_body = json.dumps(openai_payload, ensure_ascii=False).encode("utf-8")
-    headers = build_upstream_headers(None, settings, auth=auth)
-    conn.request("POST", path, body=raw_body, headers=headers)
-    resp = conn.getresponse()
+        raw_body = json.dumps(openai_payload, ensure_ascii=False).encode("utf-8")
+        headers = build_upstream_headers(None, settings, auth=auth)
+        conn.request("POST", path, body=raw_body, headers=headers)
+        resp = conn.getresponse()
+        if resp.status != 200:
+            err_body = resp.read()
+            try:
+                err_json = json.loads(err_body.decode("utf-8", errors="replace"))
+            except Exception:
+                err_json = {"error": err_body.decode("utf-8", errors="replace")}
+            _send_json(handler, resp.status, err_json, cors=True)
+            return
 
-    # Convert OpenAI SSE stream to Anthropic SSE stream
-    msg_id = f"msg_{uuid.uuid4().hex[:24]}"
-    usage = {"input_tokens": 0, "output_tokens": 0}
-    block_index = 0
-    in_text_block = False
-    in_tool_block = False
-    current_tool_index = -1
+        # Convert OpenAI SSE stream to Anthropic SSE stream
+        msg_id = f"msg_{uuid.uuid4().hex[:24]}"
+        usage = {"input_tokens": 0, "output_tokens": 0}
+        block_index = 0
+        in_text_block = False
+        in_tool_block = False
+        current_tool_index = -1
 
-    begin_sse_response(handler)
-    emit_anthropic_message_start(handler, msg_id, requested_model, usage)
+        begin_sse_response(handler)
+        emit_anthropic_message_start(handler, msg_id, requested_model, usage)
 
-    for sse_event in read_sse_chunks(resp):
-        data = sse_event.get("data", "")
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
+        for sse_event in read_sse_chunks(resp):
+            data = sse_event.get("data", "")
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
 
-        for choice in chunk.get("choices", []):
-            delta = choice.get("delta", {})
-            finish = choice.get("finish_reason")
+            for choice in chunk.get("choices", []):
+                delta = choice.get("delta", {})
+                finish = choice.get("finish_reason")
 
-            if "content" in delta and delta["content"]:
-                if in_tool_block:
-                    emit_anthropic_content_block_stop(handler, block_index)
-                    block_index += 1
-                    in_tool_block = False
-                if not in_text_block:
-                    emit_anthropic_content_block_start(handler, block_index, {"type": "text", "text": ""})
-                    in_text_block = True
-                emit_anthropic_content_block_delta(handler, block_index, {"type": "text_delta", "text": delta["content"]})
+                if "content" in delta and delta["content"]:
+                    if in_tool_block:
+                        emit_anthropic_content_block_stop(handler, block_index)
+                        block_index += 1
+                        in_tool_block = False
+                    if not in_text_block:
+                        emit_anthropic_content_block_start(handler, block_index, {"type": "text", "text": ""})
+                        in_text_block = True
+                    emit_anthropic_content_block_delta(handler, block_index, {"type": "text_delta", "text": delta["content"]})
 
-            if "tool_calls" in delta:
-                for tc in delta["tool_calls"]:
-                    tc_index = tc.get("index", 0)
+                if "tool_calls" in delta:
+                    for tc in delta["tool_calls"]:
+                        tc_index = tc.get("index", 0)
 
-                    # New tool call starts — close previous block
-                    if tc_index != current_tool_index:
-                        if in_text_block:
-                            emit_anthropic_content_block_stop(handler, block_index)
-                            block_index += 1
-                            in_text_block = False
-                        if in_tool_block:
-                            emit_anthropic_content_block_stop(handler, block_index)
-                            block_index += 1
-                        current_tool_index = tc_index
+                        # New tool call starts — close previous block
+                        if tc_index != current_tool_index:
+                            if in_text_block:
+                                emit_anthropic_content_block_stop(handler, block_index)
+                                block_index += 1
+                                in_text_block = False
+                            if in_tool_block:
+                                emit_anthropic_content_block_stop(handler, block_index)
+                                block_index += 1
+                                in_tool_block = False
+                            current_tool_index = tc_index
 
-                    fn = tc.get("function", {})
-                    if fn.get("name"):
-                        if in_text_block:
-                            emit_anthropic_content_block_stop(handler, block_index)
-                            block_index += 1
-                            in_text_block = False
-                        emit_anthropic_content_block_start(handler, block_index, {
-                            "type": "tool_use", "id": tc.get("id", ""), "name": fn["name"], "input": {},
-                        })
-                        in_tool_block = True
-                    if fn.get("arguments"):
-                        emit_anthropic_content_block_delta(handler, block_index, {
-                            "type": "input_json_delta", "partial_json": fn["arguments"],
-                        })
+                        fn = tc.get("function", {})
+                        if fn.get("name"):
+                            if in_text_block:
+                                emit_anthropic_content_block_stop(handler, block_index)
+                                block_index += 1
+                                in_text_block = False
+                            emit_anthropic_content_block_start(handler, block_index, {
+                                "type": "tool_use", "id": tc.get("id", ""), "name": fn["name"], "input": {},
+                            })
+                            in_tool_block = True
+                        if fn.get("arguments"):
+                            emit_anthropic_content_block_delta(handler, block_index, {
+                                "type": "input_json_delta", "partial_json": fn["arguments"],
+                            })
 
-            if finish:
-                if in_text_block:
-                    emit_anthropic_content_block_stop(handler, block_index)
-                    block_index += 1
-                    in_text_block = False
-                if in_tool_block:
-                    emit_anthropic_content_block_stop(handler, block_index)
-                    block_index += 1
-                    in_tool_block = False
-                stop = "end_turn" if finish == "stop" else "tool_use" if finish == "tool_calls" else "max_tokens"
-                emit_anthropic_message_delta(handler, stop, {"output_tokens": 0})
+                if finish:
+                    if in_text_block:
+                        emit_anthropic_content_block_stop(handler, block_index)
+                        block_index += 1
+                        in_text_block = False
+                    if in_tool_block:
+                        emit_anthropic_content_block_stop(handler, block_index)
+                        block_index += 1
+                        in_tool_block = False
+                    stop = "end_turn" if finish == "stop" else "tool_use" if finish == "tool_calls" else "max_tokens"
+                    emit_anthropic_message_delta(handler, stop, {"output_tokens": 0})
 
-    emit_anthropic_message_stop(handler)
+        emit_anthropic_message_stop(handler)
+    finally:
+        conn.close()
 
 
 def _stream_anthropic_response(handler: Any, anthropic_resp: dict, requested_model: str) -> None:
@@ -536,21 +591,20 @@ def handle_dashboard(handler: Any, settings: Settings) -> None:
         handler.send_response(200)
         handler.send_header("Content-Type", "text/html; charset=utf-8")
         handler.send_header("Content-Length", str(len(content)))
-        handler.send_header("Access-Control-Allow-Origin", "*")
         handler.end_headers()
         handler.wfile.write(content)
     except Exception as exc:
-        _send_json(handler, 500, {"error": f"Failed to load dashboard: {exc}"})
+        _send_json(handler, 500, {"error": f"Failed to load dashboard: {exc}"}, cors=False)
 
 
 def handle_api_settings_get(handler: Any, settings: Settings) -> None:
-    _send_json(handler, 200, settings.to_dict())
+    _send_json(handler, 200, settings.to_dict(), cors=False)
 
 
 def handle_api_settings_post(handler: Any, settings: Settings) -> None:
     body = _read_json_body(handler)
     if body is None:
-        _send_json(handler, 400, {"error": "Invalid JSON body"})
+        _send_json(handler, 400, {"error": "Invalid JSON body"}, cors=False)
         return
 
     from .config_file import save_config
@@ -567,11 +621,47 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
             pass
 
     try:
-        settings.listen_host = str(body.get("HOST", settings.listen_host))
+        host = str(body.get("HOST", settings.listen_host))
         old_port = settings.listen_port
-        new_port = int(body.get("PORT", settings.listen_port))
+        
+        try:
+            new_port = int(body.get("PORT", settings.listen_port))
+        except (ValueError, TypeError):
+            new_port = old_port
+
+        try:
+            upstream_timeout = int(body.get("UPSTREAM_TIMEOUT_SECONDS", settings.upstream_timeout))
+        except (ValueError, TypeError):
+            upstream_timeout = settings.upstream_timeout
+
+        try:
+            retry_delay_seconds = float(body.get("RETRY_DELAY_SECONDS", settings.retry_delay_seconds))
+        except (ValueError, TypeError):
+            retry_delay_seconds = settings.retry_delay_seconds
+
+        try:
+            max_retry_attempts = int(body.get("FC_ERROR_RETRY_MAX_ATTEMPTS", settings.max_retry_attempts))
+        except (ValueError, TypeError):
+            max_retry_attempts = settings.max_retry_attempts
+
+        port_changed = (old_port != new_port)
+        if port_changed:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                sock.bind((host, new_port))
+            except Exception as e:
+                _send_json(handler, 400, {"error": f"端口 {new_port} 已被占用或无法绑定: {e}"}, cors=False)
+                return
+            finally:
+                sock.close()
+
+        if port_changed:
+            settings.listen_port = new_port
+
+        settings.listen_host = host
         settings.upstream_url = str(body.get("UPSTREAM_BASE_URL", settings.upstream_url))
-        settings.upstream_timeout = int(body.get("UPSTREAM_TIMEOUT_SECONDS", settings.upstream_timeout))
+        settings.upstream_timeout = upstream_timeout
         settings.upstream_auth = str(body.get("UPSTREAM_AUTH_HEADER", settings.upstream_auth))
         settings.upstream_extra_fields = body.get("UPSTREAM_EXTRA_BODY_JSON", settings.upstream_extra_fields)
         settings.name_mapping = body.get("MODEL_MAP_JSON", settings.name_mapping)
@@ -580,25 +670,23 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
         settings.exposed_model_ids = list(body.get("PUBLIC_MODEL_IDS_JSON", settings.exposed_model_ids))
         settings.tool_instruction_intro = str(body.get("TOOL_PROMPT_PREAMBLE", settings.tool_instruction_intro))
         settings.retry_on_parse_failure = bool(body.get("FC_ERROR_RETRY", settings.retry_on_parse_failure))
-        settings.max_retry_attempts = int(body.get("FC_ERROR_RETRY_MAX_ATTEMPTS", settings.max_retry_attempts))
-        settings.retry_delay_seconds = float(body.get("RETRY_DELAY_SECONDS", settings.retry_delay_seconds))
+        settings.max_retry_attempts = max_retry_attempts
+        settings.retry_delay_seconds = retry_delay_seconds
         settings.upstreams = list(body.get("UPSTREAMS_JSON", settings.upstreams))
         settings.model_routes = dict(body.get("MODEL_ROUTES_JSON", settings.model_routes))
 
         save_config(settings.to_dict())
 
-        port_changed = (old_port != new_port)
         if port_changed:
-            settings.listen_port = new_port
             from .server import is_server_running
             if is_server_running():
                 import threading
                 from .server import start_server_threaded
                 threading.Timer(0.5, lambda: start_server_threaded(settings)).start()
 
-        _send_json(handler, 200, {"ok": True, "port_changed": port_changed})
+        _send_json(handler, 200, {"ok": True, "port_changed": port_changed}, cors=False)
     except Exception as exc:
-        _send_json(handler, 500, {"error": f"Failed to save settings: {exc}"})
+        _send_json(handler, 500, {"error": f"Failed to save settings: {exc}"}, cors=False)
 
 
 def _ping_upstream(url: str, timeout: int = 2) -> float | None:
@@ -623,17 +711,54 @@ def _ping_upstream(url: str, timeout: int = 2) -> float | None:
             return None
 
 
+import threading
+
+_latency_lock = threading.Lock()
+_latency_cache: dict[str, Any] = {"default": None, "providers": {}}
+_latency_thread_started = False
+
+
+def start_latency_monitor(settings: Settings) -> None:
+    global _latency_thread_started
+    with _latency_lock:
+        if _latency_thread_started:
+            return
+        _latency_thread_started = True
+
+    def monitor_loop():
+        while True:
+            try:
+                # 1. Ping default upstream
+                default_url = settings.upstream_url
+                default_latency = _ping_upstream(default_url)
+
+                # 2. Ping other providers
+                upstreams = list(settings.upstreams)
+                provider_latencies = {}
+                for p in upstreams:
+                    p_id = p.get("id")
+                    p_url = p.get("url")
+                    if p_id and p_url:
+                        provider_latencies[p_id] = _ping_upstream(p_url)
+
+                with _latency_lock:
+                    _latency_cache["default"] = default_latency
+                    _latency_cache["providers"] = provider_latencies
+            except Exception as e:
+                print(f"[bridge] Latency monitor error: {e}")
+            time.sleep(10)
+
+    t = threading.Thread(target=monitor_loop, daemon=True, name="LatencyMonitor")
+    t.start()
+
+
 def handle_api_status(handler: Any, settings: Settings) -> None:
     from .autostart import is_autostart_enabled
-    latency = _ping_upstream(settings.upstream_url)
-    
-    # Ping other providers
-    provider_latencies = {}
-    for p in settings.upstreams:
-        p_id = p.get("id")
-        p_url = p.get("url")
-        if p_id and p_url:
-            provider_latencies[p_id] = _ping_upstream(p_url)
+    start_latency_monitor(settings)
+
+    with _latency_lock:
+        latency = _latency_cache.get("default")
+        provider_latencies = dict(_latency_cache.get("providers", {}))
 
     _send_json(handler, 200, {
         "status": "running",
@@ -642,7 +767,7 @@ def handle_api_status(handler: Any, settings: Settings) -> None:
         "upstream_latency_ms": latency,
         "provider_latencies": provider_latencies,
         "autostart_enabled": is_autostart_enabled()
-    })
+    }, cors=False)
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +789,9 @@ _ROUTE_TABLE: dict[tuple[str, str], Any] = {
 
 def dispatch(handler: Any, settings: Settings, method: str, path: str, body: bytes | None) -> None:
     """Route a request to the appropriate handler."""
-    key = (method, path.rstrip("/") if path != "/" else path)
+    import urllib.parse
+    clean_path = urllib.parse.urlparse(path).path
+    key = (method, clean_path.rstrip("/") if clean_path != "/" else clean_path)
     handler_fn = _ROUTE_TABLE.get(key)
 
     if handler_fn:
@@ -695,11 +822,12 @@ def _read_json_body(handler: Any) -> dict | None:
         return None
 
 
-def _send_json(handler: Any, status: int, payload: dict) -> None:
+def _send_json(handler: Any, status: int, payload: dict, cors: bool = True) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
-    handler.send_header("Access-Control-Allow-Origin", "*")
+    if cors:
+        handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)

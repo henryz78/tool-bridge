@@ -53,7 +53,7 @@ def _env_str(key: str, default: str = "") -> str:
 
 @dataclass
 class Settings:
-    listen_host: str = "0.0.0.0"
+    listen_host: str = "127.0.0.1"
     listen_port: int = 8080
     upstream_url: str = "http://127.0.0.1:3000"
     upstream_timeout: int = 240
@@ -76,7 +76,7 @@ class Settings:
 
     def resolve_model_name(self, requested: str) -> str | None:
         from .model_map import resolve_model, strip_model_hints
-
+ 
         clean = strip_model_hints(requested)
         return resolve_model(clean, self.name_mapping, self.allow_unmapped)
 
@@ -150,7 +150,7 @@ class Settings:
     def from_dict(cls, data: dict) -> Settings:
         """Create Settings from a dict using env-var-style keys."""
         return cls(
-            listen_host=str(data.get("HOST", "0.0.0.0")),
+            listen_host=str(data.get("HOST", "127.0.0.1")),
             listen_port=int(data.get("PORT", 8080)),
             upstream_url=str(data.get("UPSTREAM_BASE_URL", "http://127.0.0.1:3000")),
             upstream_timeout=int(data.get("UPSTREAM_TIMEOUT_SECONDS", 240)),
@@ -175,7 +175,7 @@ class Settings:
     @classmethod
     def from_environment(cls) -> Settings:
         return cls(
-            listen_host=_env_str("HOST", "0.0.0.0"),
+            listen_host=_env_str("HOST", "127.0.0.1"),
             listen_port=_env_int("PORT", 8080),
             upstream_url=_env_str("UPSTREAM_BASE_URL", "http://127.0.0.1:3000"),
             upstream_timeout=_env_int("UPSTREAM_TIMEOUT_SECONDS", 240),

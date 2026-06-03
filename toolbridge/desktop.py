@@ -188,7 +188,7 @@ class ConfigWindow(ctk.CTkToplevel):
 
     def __init__(self, parent: ctk.CTk, settings: Settings, on_save: Any):
         super().__init__(parent)
-        self._on_save = on_save
+        self._save_callback = on_save
         self.title("Tool Bridge 设置")
         self.geometry("540x600")
         self.resizable(False, False)
@@ -349,9 +349,10 @@ class ConfigWindow(ctk.CTkToplevel):
             messagebox.showerror("错误", f"原生工具模型 JSON 无效：{exc}", parent=self)
             return
 
-        # Build new Settings
-        new_settings = Settings(
-            listen_host="0.0.0.0",
+        # Build new Settings by replacing fields on existing settings to preserve other advanced fields
+        import dataclasses
+        new_settings = dataclasses.replace(
+            self._settings,
             listen_port=port,
             upstream_url=self._upstream_url.get().strip(),
             upstream_timeout=timeout,
@@ -371,5 +372,5 @@ class ConfigWindow(ctk.CTkToplevel):
             disable_autostart()
 
         self._update_status()
-        self._on_save(new_settings)
+        self._save_callback(new_settings)
         self.destroy()

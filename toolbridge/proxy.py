@@ -100,16 +100,4 @@ def fetch_upstream_chat(payload: dict, settings: Settings) -> dict:
     return json.loads(resp_body)
 
 
-def stream_upstream_chat(payload: dict, settings: Settings) -> http.client.HTTPResponse:
-    """Open a streaming connection to the upstream and return the raw response
-    for the caller to read SSE chunks from."""
-    model = payload.get("model", "")
-    url, auth, timeout = settings.get_upstream_config(model)
 
-    conn = open_upstream_connection(settings, url=url, timeout=timeout)
-    _, _, base = _parse_url(url)
-    path = base + "/v1/chat/completions"
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = build_upstream_headers(None, settings, auth=auth)
-    conn.request("POST", path, body=body, headers=headers)
-    return conn.getresponse()
