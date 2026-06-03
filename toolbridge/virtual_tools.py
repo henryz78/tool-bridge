@@ -151,6 +151,8 @@ def parse_tool_invocation(text: str, marker: str, valid_names: list[str] | None 
         if not isinstance(items, list):
             items = [items]
         invocations = _extract_invocations(items)
+        if valid_names is not None:
+            invocations = [inv for inv in invocations if inv.name in valid_names]
         if invocations:
             return ParseOutcome(text_before_marker=pre or None, invocations=invocations)
     except json.JSONDecodeError:
@@ -277,6 +279,7 @@ def retry_parse(
         return None
 
     max_attempts = settings.max_retry_attempts
+    diagnostic = "The JSON between <<<TOOLS>>> and <<<END_TOOLS>>> could not be parsed."
     for attempt in range(max_attempts):
         kind = classify_failure(prior_text, marker)
         if kind == FailureKind.NO_MARKER:
@@ -289,7 +292,6 @@ def retry_parse(
                 {"role": "user", "content": prompt},
             ]
         else:
-            diagnostic = "The JSON between <<<TOOLS>>> and <<<END_TOOLS>>> could not be parsed."
             prompt = _CORRECTION_PROMPT.format(diagnostic=diagnostic, prior=prior_text)
             messages = messages + [
                 {"role": "assistant", "content": prior_text},
@@ -307,9 +309,14 @@ def retry_parse(
         try:
             valid_names = [t["function"]["name"] for t in tools]
             outcome = parse_tool_invocation(prior_text, marker, valid_names)
+            errors = validate_tool_params(outcome.invocations, tools)
+            if errors:
+                diagnostic = "Validation failed: " + "; ".join(errors)
+                raise ParseError(diagnostic)
             if outcome.invocations:
                 return outcome
-        except ParseError:
+        except ParseError as exc:
+            diagnostic = str(exc)
             continue
 
     return None

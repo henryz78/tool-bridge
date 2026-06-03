@@ -26,8 +26,14 @@ class ScanResult:
     prefix_text: str
 
 
-_THINK_OPEN_RE = re.compile(r"<(thinking|think)>", re.IGNORECASE)
-_THINK_CLOSE_RE = re.compile(r"</(thinking|think)>", re.IGNORECASE)
+_THINK_TAG_OPEN = re.compile(r"<(thinking|think)>", re.IGNORECASE)
+_THINK_TAG_CLOSE = re.compile(r"</(thinking|think)>", re.IGNORECASE)
+
+_CHINESE_THINK_OPEN = re.compile(r"科学研究院", re.IGNORECASE)
+_CHINESE_THINK_CLOSE = re.compile(r"科院", re.IGNORECASE)
+
+_THINK_OPEN_RE = re.compile(r"<(thinking|think)>|科学研究院", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</(thinking|think)>|科院", re.IGNORECASE)
 
 
 class TriggerScanner:
@@ -43,6 +49,8 @@ class TriggerScanner:
         self._state = _State.SCANNING
         self._buffer = ""
         self._text_before_marker = ""
+        self._expected_open_re = _THINK_OPEN_RE
+        self._expected_close_re = _THINK_CLOSE_RE
 
     def feed(self, text: str) -> ScanResult:
         """Process an incoming text chunk.  Returns a ScanResult indicating
@@ -57,6 +65,8 @@ class TriggerScanner:
     @property
     def accumulated(self) -> str:
         """All text buffered after the marker was found."""
+        if self._state == _State.IN_THINK_BLOCK:
+            return ""
         return self._buffer
 
     @property
@@ -81,7 +91,8 @@ class TriggerScanner:
 
             if self._state == _State.IN_THINK_BLOCK:
                 self._skip_think_block()
-                # After skipping, state may be SCANNING or still IN_THINK_BLOCK
+                if self._state == _State.IN_THINK_BLOCK:
+                    return ScanResult(activated=False, prefix_text="")
                 continue
 
             return ScanResult(activated=False, prefix_text="")
@@ -104,10 +115,15 @@ class TriggerScanner:
                 # Check if there's a think block ahead
                 if think_match is not None:
                     self._text_before_marker = buf[:think_match.start()]
-                    # Buffer starts AFTER the <thinking> tag so _skip_think_block
-                    # doesn't need to re-parse it
                     self._buffer = buf[think_match.end():]
                     self._state = _State.IN_THINK_BLOCK
+                    matched_open = think_match.group(0)
+                    if "科学研究院" in matched_open:
+                        self._expected_open_re = _CHINESE_THINK_OPEN
+                        self._expected_close_re = _CHINESE_THINK_CLOSE
+                    else:
+                        self._expected_open_re = _THINK_TAG_OPEN
+                        self._expected_close_re = _THINK_TAG_CLOSE
                     return ScanResult(activated=False, prefix_text="")
 
                 # Nothing found — keep buffer for partial matching
@@ -125,9 +141,15 @@ class TriggerScanner:
             if think_match is not None and think_match.start() < marker_pos:
                 # Enter think block first
                 self._text_before_marker = buf[:think_match.start()]
-                # Buffer starts AFTER the <thinking> tag
                 self._buffer = buf[think_match.end():]
                 self._state = _State.IN_THINK_BLOCK
+                matched_open = think_match.group(0)
+                if "科学研究院" in matched_open:
+                    self._expected_open_re = _CHINESE_THINK_OPEN
+                    self._expected_close_re = _CHINESE_THINK_CLOSE
+                else:
+                    self._expected_open_re = _THINK_TAG_OPEN
+                    self._expected_close_re = _THINK_TAG_CLOSE
                 return ScanResult(activated=False, prefix_text="")
 
             # Marker found outside any think block
@@ -142,25 +164,26 @@ class TriggerScanner:
     def _skip_think_block(self) -> None:
         """Skip past content inside a think block until the closing tag.
 
-        The buffer starts right after the ``<thinking>`` tag that was already
-        consumed. We search for ``</thinking>`` while tracking any nested
-        ``<thinking>`` opens.
+        The buffer starts right after the open tag that was already consumed.
         """
         buf = self._buffer
         depth = 0  # nested depth relative to the already-consumed opener
         pos = 0
 
+        close_re = getattr(self, "_expected_close_re", _THINK_CLOSE_RE)
+        open_re = getattr(self, "_expected_open_re", _THINK_OPEN_RE)
+
         while pos < len(buf):
-            close_match = _THINK_CLOSE_RE.search(buf, pos)
+            close_match = close_re.search(buf, pos)
             if close_match is None:
                 # No close tag — keep tail for partial matching
-                keep_len = len("</thinking>") + 5
+                keep_len = 15
                 if len(buf) > keep_len:
                     self._buffer = buf[-keep_len:]
                 return
 
             # Check if a nested open appears before the close
-            open_match = _THINK_OPEN_RE.search(buf, pos)
+            open_match = open_re.search(buf, pos)
             if open_match is not None and open_match.start() < close_match.start():
                 depth += 1
                 pos = open_match.end()
@@ -179,7 +202,7 @@ class TriggerScanner:
             return
 
         # Ran out of buffer inside think block
-        keep_len = len("</thinking>") + 5
+        keep_len = 15
         if len(self._buffer) > keep_len:
             self._buffer = self._buffer[-keep_len:]
 
@@ -200,28 +223,39 @@ def read_sse_chunks(response: Any) -> Generator[dict, None, None]:
             raw_line = raw_line.decode("utf-8", errors="replace")
         buf += raw_line
 
-        while "\n\n" in buf:
-            event_block, buf = buf.split("\n\n", 1)
+        # Normalize carriage returns to standard LFs before processing blocks
+        normalized = buf.replace("\r\n", "\n").replace("\r", "\n")
+        while "\n\n" in normalized:
+            event_block, normalized = normalized.split("\n\n", 1)
+            buf = normalized  # keep buf synced with remainder
+
             event_type = "message"
             data_lines: list[str] = []
             for line in event_block.split("\n"):
                 if line.startswith("event:"):
                     event_type = line[6:].strip()
                 elif line.startswith("data:"):
-                    data_lines.append(line[5:])
+                    val = line[5:]
+                    if val.startswith(" "):
+                        val = val[1:]
+                    data_lines.append(val)
                 # ignore comments and other fields
             data_str = "\n".join(data_lines)
             if data_str:
                 yield {"event": event_type, "data": data_str}
 
-    if buf.strip():
+    residual = buf.replace("\r\n", "\n").replace("\r", "\n")
+    if residual.strip():
         event_type = "message"
-        data_lines: list[str] = []
-        for line in buf.split("\n"):
+        data_lines = []
+        for line in residual.split("\n"):
             if line.startswith("event:"):
                 event_type = line[6:].strip()
             elif line.startswith("data:"):
-                data_lines.append(line[5:])
+                val = line[5:]
+                if val.startswith(" "):
+                    val = val[1:]
+                data_lines.append(val)
         data_str = "\n".join(data_lines)
         if data_str:
             yield {"event": event_type, "data": data_str}
@@ -239,6 +273,7 @@ def begin_sse_response(handler: Any) -> None:
     handler.send_header("Connection", "keep-alive")
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
+    handler.sse_started = True
 
 
 def write_sse_event(handler: Any, data: str) -> None:

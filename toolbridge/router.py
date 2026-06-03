@@ -161,6 +161,11 @@ def _nonstream_virtual_tool_call(
     valid_names = [t["function"]["name"] for t in tools]
     try:
         outcome = parse_tool_invocation(content, marker, valid_names)
+        if outcome and outcome.invocations:
+            from .virtual_tools import validate_tool_params
+            errors = validate_tool_params(outcome.invocations, tools)
+            if errors:
+                raise ParseError("; ".join(errors))
     except ParseError:
         outcome = None
 
@@ -260,6 +265,11 @@ def _stream_virtual_tool_call(
             # Try to parse tool invocations from the full content
             try:
                 outcome = parse_tool_invocation(all_content, marker, valid_names)
+                if outcome and outcome.invocations:
+                    from .virtual_tools import validate_tool_params
+                    errors = validate_tool_params(outcome.invocations, tools)
+                    if errors:
+                        raise ParseError("; ".join(errors))
             except ParseError:
                 outcome = None
 
@@ -383,6 +393,11 @@ def handle_anthropic(handler: Any, settings: Settings) -> None:
 
     try:
         outcome = parse_tool_invocation(content, marker, valid_names)
+        if outcome and outcome.invocations:
+            from .virtual_tools import validate_tool_params
+            errors = validate_tool_params(outcome.invocations, openai_tools)
+            if errors:
+                raise ParseError("; ".join(errors))
     except ParseError:
         outcome = None
 
@@ -564,17 +579,14 @@ def _stream_anthropic_response(handler: Any, anthropic_resp: dict, requested_mod
 # ---------------------------------------------------------------------------
 
 def handle_passthrough(handler: Any, settings: Settings, method: str, path: str, body: bytes | None) -> None:
-    try:
-        status, resp_body, hdrs = fetch_upstream(method, path, body, settings)
-        handler.send_response(status)
-        for k, v in hdrs.items():
-            if k.lower() not in ("transfer-encoding", "connection"):
-                handler.send_header(k, v)
-        handler.send_header("Access-Control-Allow-Origin", "*")
-        handler.end_headers()
-        handler.wfile.write(resp_body)
-    except UpstreamError as exc:
-        _send_json(handler, 502, {"error": f"upstream error: {exc.status}"})
+    status, resp_body, hdrs = fetch_upstream(method, path, body, settings)
+    handler.send_response(status)
+    for k, v in hdrs.items():
+        if k.lower() not in ("transfer-encoding", "connection"):
+            handler.send_header(k, v)
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+    handler.wfile.write(resp_body)
 
 
 # ---------------------------------------------------------------------------
@@ -656,33 +668,39 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
             finally:
                 sock.close()
 
-        if port_changed:
-            settings.listen_port = new_port
+        # Build clean merged dict for Settings instantiation
+        merged = settings.to_dict()
+        merged.update({
+            "HOST": host,
+            "PORT": new_port,
+            "UPSTREAM_BASE_URL": str(body.get("UPSTREAM_BASE_URL", settings.upstream_url)),
+            "UPSTREAM_TIMEOUT_SECONDS": upstream_timeout,
+            "UPSTREAM_AUTH_HEADER": str(body.get("UPSTREAM_AUTH_HEADER", settings.upstream_auth)),
+            "UPSTREAM_EXTRA_BODY_JSON": body.get("UPSTREAM_EXTRA_BODY_JSON", settings.upstream_extra_fields),
+            "MODEL_MAP_JSON": body.get("MODEL_MAP_JSON", settings.name_mapping),
+            "ALLOW_UNMAPPED_MODEL_PASSTHROUGH": bool(body.get("ALLOW_UNMAPPED_MODEL_PASSTHROUGH", settings.allow_unmapped)),
+            "NATIVE_TOOL_MODELS_JSON": list(body.get("NATIVE_TOOL_MODELS_JSON", settings.native_tool_model_ids)),
+            "PUBLIC_MODEL_IDS_JSON": list(body.get("PUBLIC_MODEL_IDS_JSON", settings.exposed_model_ids)),
+            "TOOL_PROMPT_PREAMBLE": str(body.get("TOOL_PROMPT_PREAMBLE", settings.tool_instruction_intro)),
+            "FC_ERROR_RETRY": bool(body.get("FC_ERROR_RETRY", settings.retry_on_parse_failure)),
+            "FC_ERROR_RETRY_MAX_ATTEMPTS": max_retry_attempts,
+            "RETRY_DELAY_SECONDS": retry_delay_seconds,
+            "UPSTREAMS_JSON": list(body.get("UPSTREAMS_JSON", settings.upstreams)),
+            "MODEL_ROUTES_JSON": dict(body.get("MODEL_ROUTES_JSON", settings.model_routes)),
+        })
 
-        settings.listen_host = host
-        settings.upstream_url = str(body.get("UPSTREAM_BASE_URL", settings.upstream_url))
-        settings.upstream_timeout = upstream_timeout
-        settings.upstream_auth = str(body.get("UPSTREAM_AUTH_HEADER", settings.upstream_auth))
-        settings.upstream_extra_fields = body.get("UPSTREAM_EXTRA_BODY_JSON", settings.upstream_extra_fields)
-        settings.name_mapping = body.get("MODEL_MAP_JSON", settings.name_mapping)
-        settings.allow_unmapped = bool(body.get("ALLOW_UNMAPPED_MODEL_PASSTHROUGH", settings.allow_unmapped))
-        settings.native_tool_model_ids = set(body.get("NATIVE_TOOL_MODELS_JSON", list(settings.native_tool_model_ids)))
-        settings.exposed_model_ids = list(body.get("PUBLIC_MODEL_IDS_JSON", settings.exposed_model_ids))
-        settings.tool_instruction_intro = str(body.get("TOOL_PROMPT_PREAMBLE", settings.tool_instruction_intro))
-        settings.retry_on_parse_failure = bool(body.get("FC_ERROR_RETRY", settings.retry_on_parse_failure))
-        settings.max_retry_attempts = max_retry_attempts
-        settings.retry_delay_seconds = retry_delay_seconds
-        settings.upstreams = list(body.get("UPSTREAMS_JSON", settings.upstreams))
-        settings.model_routes = dict(body.get("MODEL_ROUTES_JSON", settings.model_routes))
+        new_settings = Settings.from_dict(merged)
+        save_config(new_settings.to_dict())
 
-        save_config(settings.to_dict())
+        # Swap settings atomically on the server
+        handler.server.settings = new_settings
 
         if port_changed:
             from .server import is_server_running
             if is_server_running():
                 import threading
                 from .server import start_server_threaded
-                threading.Timer(0.5, lambda: start_server_threaded(settings)).start()
+                threading.Timer(0.5, lambda: start_server_threaded(new_settings)).start()
 
         _send_json(handler, 200, {"ok": True, "port_changed": port_changed}, cors=False)
     except Exception as exc:
@@ -790,21 +808,35 @@ _ROUTE_TABLE: dict[tuple[str, str], Any] = {
 def dispatch(handler: Any, settings: Settings, method: str, path: str, body: bytes | None) -> None:
     """Route a request to the appropriate handler."""
     import urllib.parse
+    import urllib.error
     clean_path = urllib.parse.urlparse(path).path
     key = (method, clean_path.rstrip("/") if clean_path != "/" else clean_path)
     handler_fn = _ROUTE_TABLE.get(key)
 
-    if handler_fn:
-        try:
+    try:
+        if handler_fn:
             handler_fn(handler, settings)
-        except UpstreamError as exc:
-            _send_json(handler, 502, {"error": f"upstream returned {exc.status}"})
-        except BridgeError as exc:
-            _send_json(handler, 500, {"error": str(exc)})
-        except Exception as exc:
-            _send_json(handler, 500, {"error": f"internal error: {exc}"})
-    else:
-        handle_passthrough(handler, settings, method, path, body)
+        else:
+            handle_passthrough(handler, settings, method, path, body)
+    except UpstreamError as exc:
+        try:
+            err_json = json.loads(exc.body.decode("utf-8", errors="replace"))
+        except Exception:
+            err_json = {"error": f"upstream returned {exc.status}"}
+        _send_json(handler, exc.status, err_json)
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            _send_json(handler, 504, {"error": f"gateway timeout: {exc.reason}"})
+        else:
+            _send_json(handler, 502, {"error": f"bad gateway: {exc.reason}"})
+    except TimeoutError as exc:
+        _send_json(handler, 504, {"error": f"gateway timeout: {exc}"})
+    except ConnectionError as exc:
+        _send_json(handler, 502, {"error": f"connection error: {exc}"})
+    except BridgeError as exc:
+        _send_json(handler, 500, {"error": str(exc)})
+    except Exception as exc:
+        _send_json(handler, 500, {"error": f"internal error: {exc}"})
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +844,9 @@ def dispatch(handler: Any, settings: Settings, method: str, path: str, body: byt
 # ---------------------------------------------------------------------------
 
 def _read_json_body(handler: Any) -> dict | None:
+    content_type = handler.headers.get("Content-Type", "")
+    if not content_type.startswith("application/json"):
+        return None
     length = int(handler.headers.get("Content-Length", 0))
     if not length:
         return None
@@ -823,6 +858,15 @@ def _read_json_body(handler: Any) -> dict | None:
 
 
 def _send_json(handler: Any, status: int, payload: dict, cors: bool = True) -> None:
+    if getattr(handler, "sse_started", False):
+        error_msg = json.dumps({"error": payload.get("error", "internal error")}, ensure_ascii=False)
+        try:
+            handler.wfile.write(f"event: error\ndata: {error_msg}\n\n".encode("utf-8"))
+            handler.wfile.flush()
+        except Exception:
+            pass
+        return
+
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")

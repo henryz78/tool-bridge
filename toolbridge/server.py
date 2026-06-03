@@ -23,6 +23,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     """Thin request handler that delegates to the router."""
 
     server: BridgeServer
+    timeout = 60
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
