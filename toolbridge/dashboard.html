@@ -562,6 +562,39 @@
             color: var(--text-secondary);
             margin-top: 4px;
         }
+
+        /* Model Tags */
+        .model-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(59, 130, 246, 0.12);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 13px;
+            font-family: 'Fira Code', monospace;
+            color: #60a5fa;
+        }
+        
+        .model-tag-remove {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-weight: bold;
+            font-size: 11px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+
+        .model-tag-remove:hover {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
     </style>
 </head>
 <body>
@@ -727,7 +760,7 @@
                         <div style="display: flex; gap: 12px; align-items: flex-end; background: rgba(15, 23, 42, 0.3); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;">
                             <div class="form-group" style="flex: 2;">
                                 <label for="route-model">请求的模型 ID</label>
-                                <input type="text" id="route-model" placeholder="例如: gpt-4o 或 deepseek-chat" style="padding: 8px 12px;">
+                                <input type="text" id="route-model" list="popular-models" placeholder="例如: gpt-4o 或 deepseek-chat" style="padding: 8px 12px;">
                             </div>
                             <div class="form-group" style="flex: 2;">
                                 <label for="route-provider-select">目标路由服务商</label>
@@ -760,36 +793,80 @@
                 <!-- Tab: Model Mappings -->
                 <div class="tab-panel" id="panel-mappings">
                     <h2>🔄 模型映射与列表管理</h2>
-                    <div class="form-grid">
-                        <div class="form-group full-width">
-                            <label for="model-map">模型名称映射字典 (MODEL_MAP_JSON)</label>
-                            <textarea id="model-map" class="code-editor" oninput="validateJson(this)" placeholder='{"gpt-4": "deepseek-chat"}'></textarea>
-                            <span class="json-error" id="model-map-error">JSON 格式不合法</span>
-                            <span class="help-text">用于转换接收到的模型名称，格式为标准 JSON 对象。</span>
-                        </div>
-                        <div class="form-group full-width">
-                            <label for="native-models">声明支持原生工具调用的模型列表 (NATIVE_TOOL_MODELS_JSON)</label>
-                            <textarea id="native-models" class="code-editor" oninput="validateJson(this)" placeholder='["deepseek-chat"]'></textarea>
-                            <span class="json-error" id="native-models-error">JSON 格式不合法，需为数组</span>
-                            <span class="help-text">原生支持工具调用的模型列表，不再执行提示词强行注入。格式为 JSON 数组。</span>
-                        </div>
-                        <div class="form-group full-width">
-                            <label for="public-models">公开暴露的模型 ID 列表 (PUBLIC_MODEL_IDS_JSON)</label>
-                            <textarea id="public-models" class="code-editor" oninput="validateJson(this)" placeholder='["deepseek-chat", "deepseek-coder"]'></textarea>
-                            <span class="json-error" id="public-models-error">JSON 格式不合法，需为数组</span>
-                            <span class="help-text">限制 `/v1/models` 返回给客户端公开展示的模型。格式为 JSON 数组。</span>
-                        </div>
-                        <div class="form-group full-width">
-                            <div class="switch-container">
-                                <div class="switch-label-desc">
-                                    <span class="switch-title">允许未映射模型透传 (ALLOW_UNMAPPED_MODEL_PASSTHROUGH)</span>
-                                    <span class="switch-desc">启用后，未在映射表中的模型名称也将允许直接穿透转发。</span>
+                    <div class="form-grid single">
+                        <!-- 1. Model Name Mappings -->
+                        <div style="background: rgba(31, 41, 55, 0.2); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                            <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 15px; color: #fff;">1. 模型名称映射 (Model Name Mappings)</h3>
+                            <div style="display: flex; gap: 12px; align-items: flex-end; background: rgba(15, 23, 42, 0.3); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;">
+                                <div class="form-group" style="flex: 2;">
+                                    <label for="map-source">外部调用模型名 (如: gpt-4)</label>
+                                    <input type="text" id="map-source" list="popular-models" placeholder="例如: gpt-4" style="padding: 8px 12px;">
                                 </div>
-                                <label class="switch">
-                                    <input type="checkbox" id="allow-unmapped">
-                                    <span class="slider"></span>
-                                </label>
+                                <div style="display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: 18px; padding-bottom: 8px;">➡️</div>
+                                <div class="form-group" style="flex: 2;">
+                                    <label for="map-target">实际转发模型名 (如: deepseek-chat)</label>
+                                    <input type="text" id="map-target" list="popular-models" placeholder="例如: deepseek-chat" style="padding: 8px 12px;">
+                                </div>
+                                <button type="button" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;" onclick="addMappingLocal()">+ 添加映射</button>
                             </div>
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th>外部模型名</th>
+                                        <th>映射后模型名</th>
+                                        <th style="text-align: right;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mappings-table-body">
+                                    <tr>
+                                        <td colspan="3" style="text-align: center; color: var(--text-secondary);">暂无配置的映射规则</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- 2. Native Tool Models -->
+                        <div style="background: rgba(31, 41, 55, 0.2); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                            <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 15px; color: #fff;">2. 声明支持原生工具调用的模型 (Native Tool Models)</h3>
+                            <div style="display: flex; gap: 12px; align-items: flex-end; background: rgba(15, 23, 42, 0.3); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="native-model-input">模型 ID</label>
+                                    <input type="text" id="native-model-input" list="popular-models" placeholder="例如: gpt-4o 或 deepseek-chat" style="padding: 8px 12px;">
+                                </div>
+                                <button type="button" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;" onclick="addNativeModelLocal()">+ 添加到列表</button>
+                            </div>
+                            <div id="native-models-container" style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; min-height: 40px; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid var(--panel-border);">
+                                <!-- Tags populate dynamically -->
+                            </div>
+                            <span class="help-text" style="display: block; margin-top: 6px;">这些模型将使用服务商自带的原生工具调用，不再由 ToolBridge 注入提示词指令。</span>
+                        </div>
+
+                        <!-- 3. Public Models -->
+                        <div style="background: rgba(31, 41, 55, 0.2); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; margin-bottom: 25px;">
+                            <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 15px; color: #fff;">3. 公开暴露的模型列表 (Public Models)</h3>
+                            <div style="display: flex; gap: 12px; align-items: flex-end; background: rgba(15, 23, 42, 0.3); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="public-model-input">模型 ID</label>
+                                    <input type="text" id="public-model-input" list="popular-models" placeholder="例如: gpt-4o 或 claude-3-5-sonnet" style="padding: 8px 12px;">
+                                </div>
+                                <button type="button" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;" onclick="addPublicModelLocal()">+ 添加到列表</button>
+                            </div>
+                            <div id="public-models-container" style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; min-height: 40px; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid var(--panel-border);">
+                                <!-- Tags populate dynamically -->
+                            </div>
+                            <span class="help-text" style="display: block; margin-top: 6px;">限制客户端调用 `/v1/models` 时列出的模型。如果不限制，将默认返回所有可路由的模型。</span>
+                        </div>
+
+                        <!-- 4. Allow Unmapped Switch -->
+                        <div class="switch-container">
+                            <div class="switch-label-desc">
+                                <span class="switch-title">允许未映射模型透传 (ALLOW_UNMAPPED_MODEL_PASSTHROUGH)</span>
+                                <span class="switch-desc">启用后，未在映射表中的模型名称也将允许直接穿透转发。</span>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="allow-unmapped">
+                                <span class="slider"></span>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -866,6 +943,156 @@
         // Data stores
         let upstreamsList = [];
         let modelRoutesMap = {};
+        let modelMappingsMap = {};
+        let nativeModelsList = [];
+        let publicModelsList = [];
+
+        // Model Name Mappings Local CRUD
+        function addMappingLocal() {
+            const source = document.getElementById('map-source').value.trim();
+            const target = document.getElementById('map-target').value.trim();
+            if (!source || !target) {
+                showToast('源模型名和目标模型名不能为空', 'error');
+                return;
+            }
+            modelMappingsMap[source] = target;
+            showToast(`已添加模型映射: [${source}] ➡️ [${target}]`);
+            document.getElementById('map-source').value = '';
+            document.getElementById('map-target').value = '';
+            renderMappingsTable();
+        }
+
+        function deleteMappingLocal(source) {
+            delete modelMappingsMap[source];
+            showToast(`已删除模型映射 [${source}]`);
+            renderMappingsTable();
+        }
+
+        function renderMappingsTable() {
+            const tbody = document.getElementById('mappings-table-body');
+            const sources = Object.keys(modelMappingsMap);
+            if (sources.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-secondary);">暂无配置的映射规则</td></tr>';
+                return;
+            }
+            tbody.innerHTML = '';
+            sources.forEach(src => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-weight: 500; color: #fff; font-family: 'Fira Code', monospace;" class="map-src"></td>
+                    <td style="font-family: 'Fira Code', monospace; color: var(--text-secondary);" class="map-tgt"></td>
+                    <td style="text-align: right;">
+                        <button type="button" class="action-btn delete">🗑️</button>
+                    </td>
+                `;
+                tr.querySelector('.map-src').textContent = src;
+                tr.querySelector('.map-tgt').textContent = modelMappingsMap[src];
+                tr.querySelector('.delete').addEventListener('click', () => {
+                    deleteMappingLocal(src);
+                });
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Native Tool Models tags CRUD
+        function addNativeModelLocal() {
+            const model = document.getElementById('native-model-input').value.trim();
+            if (!model) {
+                showToast('模型 ID 不能为空', 'error');
+                return;
+            }
+            if (nativeModelsList.includes(model)) {
+                showToast('模型已存在于原生列表中', 'warning');
+                return;
+            }
+            nativeModelsList.push(model);
+            showToast(`已将 [${model}] 添加到原生工具调用列表`);
+            document.getElementById('native-model-input').value = '';
+            renderNativeModelsTags();
+        }
+
+        function deleteNativeModelLocal(model) {
+            nativeModelsList = nativeModelsList.filter(m => m !== model);
+            showToast(`已从原生列表中移除 [${model}]`);
+            renderNativeModelsTags();
+        }
+
+        function renderNativeModelsTags() {
+            const container = document.getElementById('native-models-container');
+            if (nativeModelsList.length === 0) {
+                container.innerHTML = '<span style="color: var(--text-secondary); font-size: 13px; padding: 4px;">暂未配置任何支持原生工具调用的模型</span>';
+                return;
+            }
+            container.innerHTML = '';
+            nativeModelsList.forEach(m => {
+                const tag = document.createElement('span');
+                tag.className = 'model-tag';
+                
+                const text = document.createElement('span');
+                text.textContent = m;
+                
+                const remove = document.createElement('span');
+                remove.className = 'model-tag-remove';
+                remove.textContent = '✕';
+                remove.addEventListener('click', () => {
+                    deleteNativeModelLocal(m);
+                });
+                
+                tag.appendChild(text);
+                tag.appendChild(remove);
+                container.appendChild(tag);
+            });
+        }
+
+        // Public Model IDs tags CRUD
+        function addPublicModelLocal() {
+            const model = document.getElementById('public-model-input').value.trim();
+            if (!model) {
+                showToast('模型 ID 不能为空', 'error');
+                return;
+            }
+            if (publicModelsList.includes(model)) {
+                showToast('模型已存在于公开列表中', 'warning');
+                return;
+            }
+            publicModelsList.push(model);
+            showToast(`已将 [${model}] 添加到公开模型列表`);
+            document.getElementById('public-model-input').value = '';
+            renderPublicModelsTags();
+        }
+
+        function deletePublicModelLocal(model) {
+            publicModelsList = publicModelsList.filter(m => m !== model);
+            showToast(`已从公开列表中移除 [${model}]`);
+            renderPublicModelsTags();
+        }
+
+        function renderPublicModelsTags() {
+            const container = document.getElementById('public-models-container');
+            if (publicModelsList.length === 0) {
+                container.innerHTML = '<span style="color: var(--text-secondary); font-size: 13px; padding: 4px;">暂未配置任何限制公开暴露的模型</span>';
+                return;
+            }
+            container.innerHTML = '';
+            publicModelsList.forEach(m => {
+                const tag = document.createElement('span');
+                tag.className = 'model-tag';
+                
+                const text = document.createElement('span');
+                text.textContent = m;
+                
+                const remove = document.createElement('span');
+                remove.className = 'model-tag-remove';
+                remove.textContent = '✕';
+                remove.addEventListener('click', () => {
+                    deletePublicModelLocal(m);
+                });
+                
+                tag.appendChild(text);
+                tag.appendChild(remove);
+                container.appendChild(tag);
+            });
+        }
 
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
@@ -1155,13 +1382,17 @@
                 document.getElementById('running-port').innerText = data.PORT || 8080;
                 
                 // Mappings inputs
-                document.getElementById('model-map').value = JSON.stringify(data.MODEL_MAP_JSON || {}, null, 2);
-                document.getElementById('native-models').value = JSON.stringify(data.NATIVE_TOOL_MODELS_JSON || [], null, 2);
-                document.getElementById('public-models').value = JSON.stringify(data.PUBLIC_MODEL_IDS_JSON || [], null, 2);
+                modelMappingsMap = data.MODEL_MAP_JSON || {};
+                nativeModelsList = data.NATIVE_TOOL_MODELS_JSON || [];
+                publicModelsList = data.PUBLIC_MODEL_IDS_JSON || [];
                 document.getElementById('allow-unmapped').checked = data.ALLOW_UNMAPPED_MODEL_PASSTHROUGH !== false;
                 
-                const modelMapKeysCount = Object.keys(data.MODEL_MAP_JSON || {}).length;
+                const modelMapKeysCount = Object.keys(modelMappingsMap).length;
                 document.getElementById('mapped-models-count').innerText = `${modelMapKeysCount} 个`;
+
+                renderMappingsTable();
+                renderNativeModelsTags();
+                renderPublicModelsTags();
 
                 // Multi upstreams loading
                 upstreamsList = data.UPSTREAMS_JSON || [];
@@ -1269,9 +1500,6 @@
                 return;
             }
 
-            const modelMap = document.getElementById('model-map').value.trim() ? JSON.parse(document.getElementById('model-map').value.trim()) : {};
-            const nativeModels = document.getElementById('native-models').value.trim() ? JSON.parse(document.getElementById('native-models').value.trim()) : [];
-            const publicModels = document.getElementById('public-models').value.trim() ? JSON.parse(document.getElementById('public-models').value.trim()) : [];
             const extraBody = document.getElementById('extra-body').value.trim() ? JSON.parse(document.getElementById('extra-body').value.trim()) : {};
 
             const payload = {
@@ -1280,9 +1508,9 @@
                 UPSTREAM_BASE_URL: document.getElementById('upstream-url').value.trim(),
                 UPSTREAM_AUTH_HEADER: document.getElementById('upstream-auth').value.trim(),
                 UPSTREAM_TIMEOUT_SECONDS: parseInt(document.getElementById('upstream-timeout').value),
-                MODEL_MAP_JSON: modelMap,
-                NATIVE_TOOL_MODELS_JSON: nativeModels,
-                PUBLIC_MODEL_IDS_JSON: publicModels,
+                MODEL_MAP_JSON: modelMappingsMap,
+                NATIVE_TOOL_MODELS_JSON: nativeModelsList,
+                PUBLIC_MODEL_IDS_JSON: publicModelsList,
                 ALLOW_UNMAPPED_MODEL_PASSTHROUGH: document.getElementById('allow-unmapped').checked,
                 FC_ERROR_RETRY: document.getElementById('fc-error-retry').checked,
                 FC_ERROR_RETRY_MAX_ATTEMPTS: parseInt(document.getElementById('fc-retry-attempts').value),
@@ -1315,11 +1543,55 @@
             }
         }
 
+        async function loadUpstreamModels() {
+            try {
+                const res = await fetch('/v1/models');
+                if (res.ok) {
+                    const data = await res.json();
+                    const datalist = document.getElementById('popular-models');
+                    const existing = new Set(Array.from(datalist.options).map(o => o.value));
+                    if (data && Array.isArray(data.data)) {
+                        data.data.forEach(m => {
+                            if (m.id && !existing.has(m.id)) {
+                                const opt = document.createElement('option');
+                                opt.value = m.id;
+                                datalist.appendChild(opt);
+                            }
+                        });
+                    }
+                }
+            } catch (e) {
+                // Ignore silent load failures
+            }
+        }
+
         // Init
         document.addEventListener('DOMContentLoaded', () => {
             fetchSettings();
+            loadUpstreamModels();
             setInterval(fetchStatus, 5000); // Poll status every 5 seconds
         });
     </script>
+    <datalist id="popular-models">
+        <!-- OpenAI -->
+        <option value="gpt-4o">
+        <option value="gpt-4o-mini">
+        <option value="gpt-4-turbo">
+        <option value="o1-preview">
+        <option value="o1-mini">
+        <!-- DeepSeek -->
+        <option value="deepseek-chat">
+        <option value="deepseek-reasoner">
+        <!-- Grok -->
+        <option value="grok-2">
+        <option value="grok-2-vision">
+        <!-- Anthropic Claude -->
+        <option value="claude-3-5-sonnet-latest">
+        <option value="claude-3-5-haiku-latest">
+        <option value="claude-3-opus-latest">
+        <!-- Google Gemini -->
+        <option value="gemini-1.5-pro">
+        <option value="gemini-1.5-flash">
+    </datalist>
 </body>
 </html>
