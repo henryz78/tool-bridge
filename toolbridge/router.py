@@ -792,12 +792,48 @@ def handle_api_status(handler: Any, settings: Settings) -> None:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+def handle_api_upstream_models(handler: Any, settings: Settings) -> None:
+    import urllib.parse
+    import urllib.request
+    parsed = urllib.parse.urlparse(handler.path)
+    q = urllib.parse.parse_qs(parsed.query)
+    provider_id = q.get("provider_id", [None])[0]
+
+    url = settings.upstream_url
+    auth = settings.upstream_auth
+    timeout = settings.upstream_timeout
+
+    if provider_id:
+        for p in settings.upstreams:
+            if p.get("id") == provider_id:
+                url = p.get("url", url)
+                auth = p.get("auth", auth)
+                timeout = p.get("timeout", timeout)
+                break
+
+    from .proxy import build_upstream_headers, merge_url_path
+    full_url = merge_url_path(url, "/v1/models")
+    req = urllib.request.Request(full_url, method="GET")
+
+    headers = build_upstream_headers(None, settings, auth=auth)
+    for k, v in headers.items():
+        req.add_header(k, v)
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            _send_json(handler, 200, data, cors=False)
+    except Exception as exc:
+        _send_json(handler, 500, {"error": f"Failed to fetch models from upstream: {exc}"}, cors=False)
+
+
 _ROUTE_TABLE: dict[tuple[str, str], Any] = {
     ("GET", "/"): handle_dashboard,
     ("GET", "/dashboard"): handle_dashboard,
     ("GET", "/api/settings"): handle_api_settings_get,
     ("POST", "/api/settings"): handle_api_settings_post,
     ("GET", "/api/status"): handle_api_status,
+    ("GET", "/api/upstream/models"): handle_api_upstream_models,
     ("GET", "/health"): handle_health,
     ("GET", "/v1/models"): handle_models,
     ("POST", "/v1/chat/completions"): handle_chat,

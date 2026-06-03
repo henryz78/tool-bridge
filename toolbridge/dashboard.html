@@ -759,14 +759,14 @@
                         <!-- Add Route form inline -->
                         <div style="display: flex; gap: 12px; align-items: flex-end; background: rgba(15, 23, 42, 0.3); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;">
                             <div class="form-group" style="flex: 2;">
-                                <label for="route-model">请求的模型 ID</label>
-                                <input type="text" id="route-model" list="popular-models" placeholder="例如: gpt-4o 或 deepseek-chat" style="padding: 8px 12px;">
-                            </div>
-                            <div class="form-group" style="flex: 2;">
-                                <label for="route-provider-select">目标路由服务商</label>
-                                <select id="route-provider-select" style="background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 8px 12px; color: #fff; font-family: inherit; font-size: 14px; width: 100%; outline: none;">
+                                <label for="route-provider-select">1. 选择目标服务商</label>
+                                <select id="route-provider-select" onchange="onProviderSelectChanged()" style="background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 8px 12px; color: #fff; font-family: inherit; font-size: 14px; width: 100%; outline: none;">
                                     <option value="">-- 请选择目标服务商 --</option>
                                 </select>
+                            </div>
+                            <div class="form-group" style="flex: 2;">
+                                <label for="route-model">2. 选择或输入模型 ID</label>
+                                <input type="text" id="route-model" list="popular-models" placeholder="选择服务商后在此选择/输入" style="padding: 8px 12px;">
                             </div>
                             <button type="button" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;" onclick="addRouteLocal()">+ 添加映射规则</button>
                         </div>
@@ -1543,13 +1543,23 @@
             }
         }
 
-        async function loadUpstreamModels() {
+        async function onProviderSelectChanged() {
+            const providerId = document.getElementById('route-provider-select').value;
+            const datalist = document.getElementById('popular-models');
+            datalist.innerHTML = ''; 
+
+            const modelInput = document.getElementById('route-model');
+            const oldPlaceholder = modelInput.placeholder;
+            modelInput.placeholder = "加载模型中...";
+
             try {
-                const res = await fetch('/v1/models');
+                let url = '/api/upstream/models';
+                if (providerId) {
+                    url += `?provider_id=${encodeURIComponent(providerId)}`;
+                }
+                const res = await fetch(url);
                 if (res.ok) {
                     const data = await res.json();
-                    const datalist = document.getElementById('popular-models');
-                    datalist.innerHTML = '';
                     if (data && Array.isArray(data.data)) {
                         data.data.forEach(m => {
                             if (m.id) {
@@ -1558,11 +1568,22 @@
                                 datalist.appendChild(opt);
                             }
                         });
+                        showToast(`已从 [${providerId || '默认上游'}] 加载了 ${data.data.length} 个可用模型`);
+                    } else {
+                        showToast(`未能从上游获取模型列表`, 'warning');
                     }
+                } else {
+                    showToast('获取上游模型列表失败，请确认上游地址和 API Key 正确', 'warning');
                 }
             } catch (e) {
-                // Ignore silent load failures
+                showToast(`连通上游失败: ${e.message}`, 'error');
+            } finally {
+                modelInput.placeholder = providerId ? "在下拉列表中选择或直接输入" : "选择服务商后在此选择/输入";
             }
+        }
+
+        async function loadUpstreamModels() {
+            await onProviderSelectChanged();
         }
 
         // Init
