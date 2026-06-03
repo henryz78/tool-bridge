@@ -1549,10 +1549,10 @@
                 if (res.ok) {
                     const data = await res.json();
                     const datalist = document.getElementById('popular-models');
-                    const existing = new Set(Array.from(datalist.options).map(o => o.value));
+                    datalist.innerHTML = '';
                     if (data && Array.isArray(data.data)) {
                         data.data.forEach(m => {
-                            if (m.id && !existing.has(m.id)) {
+                            if (m.id) {
                                 const opt = document.createElement('option');
                                 opt.value = m.id;
                                 datalist.appendChild(opt);
@@ -1573,25 +1573,6 @@
         });
     </script>
     <datalist id="popular-models">
-        <!-- OpenAI -->
-        <option value="gpt-4o">
-        <option value="gpt-4o-mini">
-        <option value="gpt-4-turbo">
-        <option value="o1-preview">
-        <option value="o1-mini">
-        <!-- DeepSeek -->
-        <option value="deepseek-chat">
-        <option value="deepseek-reasoner">
-        <!-- Grok -->
-        <option value="grok-2">
-        <option value="grok-2-vision">
-        <!-- Anthropic Claude -->
-        <option value="claude-3-5-sonnet-latest">
-        <option value="claude-3-5-haiku-latest">
-        <option value="claude-3-opus-latest">
-        <!-- Google Gemini -->
-        <option value="gemini-1.5-pro">
-        <option value="gemini-1.5-flash">
     </datalist>
 </body>
 </html>
