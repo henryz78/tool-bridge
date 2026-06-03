@@ -746,12 +746,17 @@ def start_latency_monitor(settings: Settings) -> None:
     def monitor_loop():
         while True:
             try:
+                from .server import _server_instance
+                current_settings = settings
+                if _server_instance is not None:
+                    current_settings = _server_instance.settings
+
                 # 1. Ping default upstream
-                default_url = settings.upstream_url
+                default_url = current_settings.upstream_url
                 default_latency = _ping_upstream(default_url)
 
                 # 2. Ping other providers
-                upstreams = list(settings.upstreams)
+                upstreams = list(current_settings.upstreams)
                 provider_latencies = {}
                 for p in upstreams:
                     p_id = p.get("id")
