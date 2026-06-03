@@ -49,6 +49,9 @@ def build_upstream_headers(
     }
     target_auth = auth if auth is not None else settings.upstream_auth
     if target_auth:
+        target_auth = target_auth.strip()
+        if target_auth and not any(target_auth.lower().startswith(p) for p in ("bearer ", "basic ", "apikey ")):
+            target_auth = f"Bearer {target_auth}"
         headers["Authorization"] = target_auth
     return headers
 
@@ -78,7 +81,7 @@ def fetch_upstream(
     model = _extract_model_from_body(body)
     url, auth, timeout = settings.get_upstream_config(model)
 
-    full_url = url.rstrip("/") + path
+    full_url = merge_url_path(url, path)
     req = urllib.request.Request(full_url, data=body, method=method)
     for k, v in build_upstream_headers(None, settings, auth=auth).items():
         req.add_header(k, v)
@@ -98,6 +101,37 @@ def fetch_upstream_chat(payload: dict, settings: Settings) -> dict:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     status, resp_body, _ = fetch_upstream("POST", "/v1/chat/completions", body, settings)
     return json.loads(resp_body)
+
+
+def resolve_request_path(url: str, default_path: str) -> str:
+    """Resolve the path component for HTTPConnection.request, resolving overlaps."""
+    parsed = urllib.parse.urlparse(url)
+    base_path = parsed.path.rstrip("/")
+    
+    # Strip common completions suffixes if present to find the clean base path
+    if base_path.endswith("/v1/chat/completions"):
+        base_path = base_path[:-20]
+    elif base_path.endswith("/chat/completions"):
+        base_path = base_path[:-17]
+
+    base_segs = [s for s in base_path.split("/") if s]
+    path_segs = [s for s in default_path.split("/") if s]
+    
+    overlap = 0
+    for i in range(1, min(len(base_segs), len(path_segs)) + 1):
+        if base_segs[-i:] == path_segs[:i]:
+            overlap = i
+            
+    return "/" + "/".join(base_segs + path_segs[overlap:])
+
+
+def merge_url_path(base_url: str, path: str) -> str:
+    """Merge a base URL and a request path, resolving overlap of path segments."""
+    parsed_base = urllib.parse.urlparse(base_url)
+    resolved_path = resolve_request_path(base_url, path)
+    parts = list(parsed_base)
+    parts[2] = resolved_path
+    return urllib.parse.urlunparse(parts)
 
 
 

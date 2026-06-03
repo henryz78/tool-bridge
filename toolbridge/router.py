@@ -95,13 +95,12 @@ def handle_chat(handler: Any, settings: Settings) -> None:
 
 def _passthrough_chat(handler: Any, body: dict, stream: bool, settings: Settings) -> None:
     if stream:
-        from .proxy import open_upstream_connection, build_upstream_headers, _parse_url
+        from .proxy import open_upstream_connection, build_upstream_headers, resolve_request_path
         model = body.get("model", "")
         url, auth, timeout = settings.get_upstream_config(model)
         conn = open_upstream_connection(settings, url=url, timeout=timeout)
         try:
-            _, _, base = _parse_url(url)
-            path = base + "/v1/chat/completions"
+            path = resolve_request_path(url, "/v1/chat/completions")
             raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
             headers = build_upstream_headers(None, settings, auth=auth)
             conn.request("POST", path, body=raw_body, headers=headers)
@@ -189,7 +188,7 @@ def _nonstream_virtual_tool_call(
 def _stream_virtual_tool_call(
     handler: Any, body: dict, marker: str, tools: list[dict], settings: Settings,
 ) -> None:
-    from .proxy import open_upstream_connection, build_upstream_headers
+    from .proxy import open_upstream_connection, build_upstream_headers, resolve_request_path
     import urllib.parse
 
     model = body.get("model", "")
@@ -197,9 +196,7 @@ def _stream_virtual_tool_call(
 
     conn = open_upstream_connection(settings, url=url, timeout=timeout)
     try:
-        parsed = urllib.parse.urlparse(url)
-        base_path = parsed.path.rstrip("/")
-        path = base_path + "/v1/chat/completions"
+        path = resolve_request_path(url, "/v1/chat/completions")
 
         raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
         headers = build_upstream_headers(None, settings, auth=auth)
@@ -444,7 +441,7 @@ def handle_anthropic(handler: Any, settings: Settings) -> None:
 def _passthrough_anthropic_stream(
     handler: Any, openai_payload: dict, requested_model: str, settings: Settings,
 ) -> None:
-    from .proxy import open_upstream_connection, build_upstream_headers
+    from .proxy import open_upstream_connection, build_upstream_headers, resolve_request_path
     import urllib.parse
 
     model = requested_model
@@ -452,9 +449,7 @@ def _passthrough_anthropic_stream(
 
     conn = open_upstream_connection(settings, url=url, timeout=timeout)
     try:
-        parsed = urllib.parse.urlparse(url)
-        base_path = parsed.path.rstrip("/")
-        path = base_path + "/v1/chat/completions"
+        path = resolve_request_path(url, "/v1/chat/completions")
 
         raw_body = json.dumps(openai_payload, ensure_ascii=False).encode("utf-8")
         headers = build_upstream_headers(None, settings, auth=auth)
