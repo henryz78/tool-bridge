@@ -517,10 +517,126 @@ def handle_passthrough(handler: Any, settings: Settings, method: str, path: str,
 
 
 # ---------------------------------------------------------------------------
+# Dashboard and Settings APIs
+# ---------------------------------------------------------------------------
+
+def handle_dashboard(handler: Any, settings: Settings) -> None:
+    import os
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    html_path = os.path.join(dir_path, "dashboard.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as f:
+            content = f.read().encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(content)))
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.end_headers()
+        handler.wfile.write(content)
+    except Exception as exc:
+        _send_json(handler, 500, {"error": f"Failed to load dashboard: {exc}"})
+
+
+def handle_api_settings_get(handler: Any, settings: Settings) -> None:
+    _send_json(handler, 200, settings.to_dict())
+
+
+def handle_api_settings_post(handler: Any, settings: Settings) -> None:
+    body = _read_json_body(handler)
+    if body is None:
+        _send_json(handler, 400, {"error": "Invalid JSON body"})
+        return
+
+    from .config_file import save_config
+    from .autostart import enable_autostart, disable_autostart
+
+    autostart = body.get("autostart")
+    if autostart is not None:
+        try:
+            if autostart:
+                enable_autostart()
+            else:
+                disable_autostart()
+        except Exception:
+            pass
+
+    try:
+        settings.listen_host = str(body.get("HOST", settings.listen_host))
+        old_port = settings.listen_port
+        new_port = int(body.get("PORT", settings.listen_port))
+        settings.upstream_url = str(body.get("UPSTREAM_BASE_URL", settings.upstream_url))
+        settings.upstream_timeout = int(body.get("UPSTREAM_TIMEOUT_SECONDS", settings.upstream_timeout))
+        settings.upstream_auth = str(body.get("UPSTREAM_AUTH_HEADER", settings.upstream_auth))
+        settings.upstream_extra_fields = body.get("UPSTREAM_EXTRA_BODY_JSON", settings.upstream_extra_fields)
+        settings.name_mapping = body.get("MODEL_MAP_JSON", settings.name_mapping)
+        settings.allow_unmapped = bool(body.get("ALLOW_UNMAPPED_MODEL_PASSTHROUGH", settings.allow_unmapped))
+        settings.native_tool_model_ids = set(body.get("NATIVE_TOOL_MODELS_JSON", list(settings.native_tool_model_ids)))
+        settings.exposed_model_ids = list(body.get("PUBLIC_MODEL_IDS_JSON", settings.exposed_model_ids))
+        settings.tool_instruction_intro = str(body.get("TOOL_PROMPT_PREAMBLE", settings.tool_instruction_intro))
+        settings.retry_on_parse_failure = bool(body.get("FC_ERROR_RETRY", settings.retry_on_parse_failure))
+        settings.max_retry_attempts = int(body.get("FC_ERROR_RETRY_MAX_ATTEMPTS", settings.max_retry_attempts))
+        settings.retry_delay_seconds = float(body.get("RETRY_DELAY_SECONDS", settings.retry_delay_seconds))
+
+        save_config(settings.to_dict())
+
+        port_changed = (old_port != new_port)
+        if port_changed:
+            settings.listen_port = new_port
+            from .server import is_server_running
+            if is_server_running():
+                import threading
+                from .server import start_server_threaded
+                threading.Timer(0.5, lambda: start_server_threaded(settings)).start()
+
+        _send_json(handler, 200, {"ok": True, "port_changed": port_changed})
+    except Exception as exc:
+        _send_json(handler, 500, {"error": f"Failed to save settings: {exc}"})
+
+
+def _ping_upstream(url: str, timeout: int = 2) -> float | None:
+    import time
+    import urllib.request
+    import urllib.error
+    start = time.perf_counter()
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
+        return round((time.perf_counter() - start) * 1000)
+    except Exception:
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout):
+                pass
+            return round((time.perf_counter() - start) * 1000)
+        except urllib.error.HTTPError:
+            return round((time.perf_counter() - start) * 1000)
+        except Exception:
+            return None
+
+
+def handle_api_status(handler: Any, settings: Settings) -> None:
+    from .autostart import is_autostart_enabled
+    latency = _ping_upstream(settings.upstream_url)
+    _send_json(handler, 200, {
+        "status": "running",
+        "port": settings.listen_port,
+        "host": settings.listen_host,
+        "upstream_latency_ms": latency,
+        "autostart_enabled": is_autostart_enabled()
+    })
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
 _ROUTE_TABLE: dict[tuple[str, str], Any] = {
+    ("GET", "/"): handle_dashboard,
+    ("GET", "/dashboard"): handle_dashboard,
+    ("GET", "/api/settings"): handle_api_settings_get,
+    ("POST", "/api/settings"): handle_api_settings_post,
+    ("GET", "/api/status"): handle_api_status,
     ("GET", "/health"): handle_health,
     ("GET", "/v1/models"): handle_models,
     ("POST", "/v1/chat/completions"): handle_chat,

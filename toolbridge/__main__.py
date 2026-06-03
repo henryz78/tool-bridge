@@ -15,7 +15,7 @@ def main() -> None:
         settings = _load_settings_for_desktop()
         TrayApp(settings).run()
     else:
-        settings = Settings.from_environment()
+        settings = _load_settings_for_desktop()
         run_server(settings)
 
 
