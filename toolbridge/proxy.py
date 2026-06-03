@@ -22,24 +22,47 @@ def _parse_url(url: str) -> tuple[str, int, str]:
     return host, port, base
 
 
-def open_upstream_connection(settings: Settings) -> http.client.HTTPConnection:
+def open_upstream_connection(
+    settings: Settings,
+    url: str | None = None,
+    timeout: int | None = None,
+) -> http.client.HTTPConnection:
     """Open a connection to the upstream API."""
-    host, port, _ = _parse_url(settings.upstream_url)
-    parsed = urllib.parse.urlparse(settings.upstream_url)
+    target_url = url or settings.upstream_url
+    target_timeout = timeout if timeout is not None else settings.upstream_timeout
+    host, port, _ = _parse_url(target_url)
+    parsed = urllib.parse.urlparse(target_url)
     if parsed.scheme == "https":
-        return http.client.HTTPSConnection(host, port, timeout=settings.upstream_timeout)
-    return http.client.HTTPConnection(host, port, timeout=settings.upstream_timeout)
+        return http.client.HTTPSConnection(host, port, timeout=target_timeout)
+    return http.client.HTTPConnection(host, port, timeout=target_timeout)
 
 
-def build_upstream_headers(request_headers: dict | None, settings: Settings) -> dict[str, str]:
+def build_upstream_headers(
+    request_headers: dict | None,
+    settings: Settings,
+    auth: str | None = None,
+) -> dict[str, str]:
     """Construct headers for an upstream request."""
     headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    if settings.upstream_auth:
-        headers["Authorization"] = settings.upstream_auth
+    target_auth = auth if auth is not None else settings.upstream_auth
+    if target_auth:
+        headers["Authorization"] = target_auth
     return headers
+
+
+def _extract_model_from_body(body: bytes | None) -> str | None:
+    if not body:
+        return None
+    try:
+        data = json.loads(body.decode("utf-8", errors="replace"))
+        if isinstance(data, dict):
+            return data.get("model")
+    except Exception:
+        pass
+    return None
 
 
 def fetch_upstream(
@@ -52,19 +75,22 @@ def fetch_upstream(
 
     Returns (status_code, response_body, response_headers).
     """
-    url = settings.upstream_url.rstrip("/") + path
-    req = urllib.request.Request(url, data=body, method=method)
-    for k, v in build_upstream_headers(None, settings).items():
+    model = _extract_model_from_body(body)
+    url, auth, timeout = settings.get_upstream_config(model)
+
+    full_url = url.rstrip("/") + path
+    req = urllib.request.Request(full_url, data=body, method=method)
+    for k, v in build_upstream_headers(None, settings, auth=auth).items():
         req.add_header(k, v)
 
     try:
-        with urllib.request.urlopen(req, timeout=settings.upstream_timeout) as resp:
-            body = resp.read()
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_bytes = resp.read()
             hdrs = {k.lower(): v for k, v in resp.headers.items()}
-            return resp.status, body, hdrs
+            return resp.status, body_bytes, hdrs
     except urllib.error.HTTPError as exc:
-        body = exc.read() if exc.fp else b""
-        raise UpstreamError(exc.code, body) from exc
+        body_bytes = exc.read() if exc.fp else b""
+        raise UpstreamError(exc.code, body_bytes) from exc
 
 
 def fetch_upstream_chat(payload: dict, settings: Settings) -> dict:
@@ -77,10 +103,13 @@ def fetch_upstream_chat(payload: dict, settings: Settings) -> dict:
 def stream_upstream_chat(payload: dict, settings: Settings) -> http.client.HTTPResponse:
     """Open a streaming connection to the upstream and return the raw response
     for the caller to read SSE chunks from."""
-    conn = open_upstream_connection(settings)
-    _, _, base = _parse_url(settings.upstream_url)
+    model = payload.get("model", "")
+    url, auth, timeout = settings.get_upstream_config(model)
+
+    conn = open_upstream_connection(settings, url=url, timeout=timeout)
+    _, _, base = _parse_url(url)
     path = base + "/v1/chat/completions"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = build_upstream_headers(None, settings)
+    headers = build_upstream_headers(None, settings, auth=auth)
     conn.request("POST", path, body=body, headers=headers)
     return conn.getresponse()

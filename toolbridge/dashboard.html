@@ -404,6 +404,53 @@
             color: #fff;
         }
 
+        /* Tables styling */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            margin-top: 10px;
+        }
+
+        table th, table td {
+            padding: 12px;
+            border-bottom: 1px solid var(--panel-border);
+        }
+
+        table th {
+            color: var(--text-secondary);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        table tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        /* Action buttons */
+        .action-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .action-btn.edit:hover {
+            color: var(--primary);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .action-btn.delete:hover {
+            color: var(--danger);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
         /* Submit Button */
         .button-bar {
             display: flex;
@@ -425,11 +472,11 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            border: 1px solid transparent;
         }
 
         .btn-primary {
             background: var(--primary);
-            border: 1px solid rgba(255, 255, 255, 0.1);
             color: #fff;
             box-shadow: 0 4px 12px var(--primary-glow);
         }
@@ -441,7 +488,7 @@
 
         .btn-secondary {
             background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--panel-border);
+            border-color: var(--panel-border);
             color: var(--text-secondary);
         }
 
@@ -499,6 +546,11 @@
             color: var(--danger);
         }
 
+        .toast-warning .toast-icon {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+        }
+
         .toast-text {
             font-size: 14px;
             font-weight: 500;
@@ -529,6 +581,7 @@
         <div class="sidebar">
             <button class="tab-btn active" onclick="switchTab('dashboard')">📊 状态概览</button>
             <button class="tab-btn" onclick="switchTab('network')">🌐 网络与连接</button>
+            <button class="tab-btn" onclick="switchTab('multi-upstream')">🌐 多上游与路由</button>
             <button class="tab-btn" onclick="switchTab('mappings')">🔄 模型映射</button>
             <button class="tab-btn" onclick="switchTab('strategy')">🛡️ 工具调用策略</button>
             <button class="tab-btn" onclick="switchTab('advanced')">⚙️ 高级配置</button>
@@ -541,7 +594,7 @@
                     <h2>📊 状态概览</h2>
                     <div class="widgets-grid">
                         <div class="widget-card">
-                            <span class="widget-title">上游连通性</span>
+                            <span class="widget-title">默认上游连通性</span>
                             <span class="widget-value" id="upstream-ping">检测中...</span>
                         </div>
                         <div class="widget-card">
@@ -558,7 +611,12 @@
                         </div>
                     </div>
                     
-                    <div class="form-grid single" style="margin-top: 20px;">
+                    <h3 style="font-size: 14px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; margin-top: 20px;">多路分发上游连通性</h3>
+                    <div class="widgets-grid" id="multi-latency-grid" style="margin-bottom: 20px;">
+                        <!-- Dynamic latency widgets populated by JS -->
+                    </div>
+
+                    <div class="form-grid single">
                         <div class="widget-card" style="background: rgba(17, 24, 39, 0.4); display: block;">
                             <span class="widget-title" style="margin-bottom: 8px; display: block;">快速说明</span>
                             <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">
@@ -583,49 +641,149 @@
                             <span class="help-text">代理本机的访问端口，需为有效空闲端口</span>
                         </div>
                         <div class="form-group full-width">
-                            <label for="upstream-url">上游接口地址 (UPSTREAM_BASE_URL)</label>
+                            <label for="upstream-url">默认上游接口地址 (UPSTREAM_BASE_URL)</label>
                             <input type="text" id="upstream-url" required placeholder="https://api.deepseek.com">
-                            <span class="help-text">大模型提供商的接口 Base URL</span>
+                            <span class="help-text">未指定路由规则模型时的默认分发地址</span>
                         </div>
                         <div class="form-group full-width">
-                            <label for="upstream-auth">上游认证 Token 头 (UPSTREAM_AUTH_HEADER)</label>
+                            <label for="upstream-auth">默认上游认证 Token 头 (UPSTREAM_AUTH_HEADER)</label>
                             <input type="text" id="upstream-auth" placeholder="Bearer sk-...">
                             <span class="help-text">包含 Authorization 的完整头部，一般为 `Bearer sk-xxx`</span>
                         </div>
                         <div class="form-group">
-                            <label for="upstream-timeout">上游超时时间（秒） (UPSTREAM_TIMEOUT_SECONDS)</label>
+                            <label for="upstream-timeout">默认超时时间（秒） (UPSTREAM_TIMEOUT_SECONDS)</label>
                             <input type="number" id="upstream-timeout" required placeholder="240">
                         </div>
                     </div>
                 </div>
 
+                <!-- Tab: Multi-Upstream Managers -->
+                <div class="tab-panel" id="panel-multi-upstream">
+                    <h2>🌐 多上游与分发路由管理</h2>
+                    
+                    <!-- Providers config card -->
+                    <div style="background: rgba(31, 41, 55, 0.2); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; margin-bottom: 30px;">
+                        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 15px; color: #fff; display: flex; justify-content: space-between; align-items: center;">
+                            <span>1. 配置多上游服务商 (Upstream Providers)</span>
+                            <button type="button" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; border-radius: 6px;" onclick="showProviderForm()">+ 新增服务商</button>
+                        </h3>
+
+                        <!-- Add/Edit Provider Form (Hidden by default) -->
+                        <div id="provider-form-block" style="display: none; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--panel-border); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                            <h4 id="provider-form-title" style="font-size: 13px; font-weight: 600; margin-bottom: 12px; color: #fff;">新增服务商</h4>
+                            <input type="hidden" id="prov-edit-index" value="-1">
+                            <div class="form-grid" style="gap: 12px; margin-bottom: 12px;">
+                                <div class="form-group">
+                                    <label for="prov-id">唯一服务商 ID (不可含有空格或特殊符号)</label>
+                                    <input type="text" id="prov-id" placeholder="例如: deepseek-backup">
+                                </div>
+                                <div class="form-group">
+                                    <label for="prov-name">名称显示</label>
+                                    <input type="text" id="prov-name" placeholder="例如: DeepSeek 备用">
+                                </div>
+                                <div class="form-group full-width" style="margin: 0;">
+                                    <label for="prov-url">服务商 API Base URL</label>
+                                    <input type="text" id="prov-url" placeholder="例如: https://api.deepseek.com">
+                                </div>
+                                <div class="form-group full-width" style="margin: 0;">
+                                    <label for="prov-auth">认证 Token (Authorization)</label>
+                                    <input type="text" id="prov-auth" placeholder="例如: Bearer sk-...">
+                                </div>
+                                <div class="form-group">
+                                    <label for="prov-timeout">超时时间（秒）</label>
+                                    <input type="number" id="prov-timeout" value="240">
+                                </div>
+                            </div>
+                            <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                                <button type="button" class="btn btn-secondary" style="padding: 6px 14px; font-size: 12px;" onclick="hideProviderForm()">取消</button>
+                                <button type="button" class="btn btn-primary" style="padding: 6px 14px; font-size: 12px;" onclick="saveProviderLocal()">确定</button>
+                            </div>
+                        </div>
+
+                        <!-- Providers List -->
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>展示名称</th>
+                                    <th>API URL</th>
+                                    <th>超时 (S)</th>
+                                    <th style="text-align: right;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="providers-table-body">
+                                <tr>
+                                    <td colspan="5" style="text-align: center; color: var(--text-secondary);">暂无配置的独立服务商</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Routes Config Card -->
+                    <div style="background: rgba(31, 41, 55, 0.2); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px;">
+                        <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 15px; color: #fff;">2. 配置模型路由规则 (Model Routing Rules)</h3>
+                        
+                        <!-- Add Route form inline -->
+                        <div style="display: flex; gap: 12px; align-items: flex-end; background: rgba(15, 23, 42, 0.3); border: 1px solid var(--panel-border); border-radius: 8px; padding: 12px 15px; margin-bottom: 15px;">
+                            <div class="form-group" style="flex: 2;">
+                                <label for="route-model">请求的模型 ID</label>
+                                <input type="text" id="route-model" placeholder="例如: gpt-4o 或 deepseek-chat" style="padding: 8px 12px;">
+                            </div>
+                            <div class="form-group" style="flex: 2;">
+                                <label for="route-provider-select">目标路由服务商</label>
+                                <select id="route-provider-select" style="background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 8px; padding: 8px 12px; color: #fff; font-family: inherit; font-size: 14px; width: 100%; outline: none;">
+                                    <option value="">-- 请选择目标服务商 --</option>
+                                </select>
+                            </div>
+                            <button type="button" class="btn btn-primary" style="padding: 8px 16px; font-size: 13px;" onclick="addRouteLocal()">+ 添加映射规则</button>
+                        </div>
+
+                        <!-- Routes list -->
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr>
+                                    <th>外部调用模型 ID</th>
+                                    <th>路由至服务商 ID</th>
+                                    <th>映射 API 物理 URL</th>
+                                    <th style="text-align: right;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="routes-table-body">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-secondary);">暂无分流规则，所有请求均指向默认上游</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <!-- Tab: Model Mappings -->
                 <div class="tab-panel" id="panel-mappings">
-                    <h2>🔄 模型映射与名单</h2>
+                    <h2>🔄 模型映射与列表管理</h2>
                     <div class="form-grid">
                         <div class="form-group full-width">
                             <label for="model-map">模型名称映射字典 (MODEL_MAP_JSON)</label>
                             <textarea id="model-map" class="code-editor" oninput="validateJson(this)" placeholder='{"gpt-4": "deepseek-chat"}'></textarea>
                             <span class="json-error" id="model-map-error">JSON 格式不合法</span>
-                            <span class="help-text">以键值对表示，用于重命名外部调用的模型名称。格式为 JSON Object</span>
+                            <span class="help-text">用于转换接收到的模型名称，格式为标准 JSON 对象。</span>
                         </div>
                         <div class="form-group full-width">
-                            <label for="native-models">原生工具模型列表 (NATIVE_TOOL_MODELS_JSON)</label>
+                            <label for="native-models">声明支持原生工具调用的模型列表 (NATIVE_TOOL_MODELS_JSON)</label>
                             <textarea id="native-models" class="code-editor" oninput="validateJson(this)" placeholder='["deepseek-chat"]'></textarea>
                             <span class="json-error" id="native-models-error">JSON 格式不合法，需为数组</span>
-                            <span class="help-text">凡在此列表内的模型，其 Tool-calling 请求将直接透传，不注入虚拟工具。格式为 JSON Array</span>
+                            <span class="help-text">原生支持工具调用的模型列表，不再执行提示词强行注入。格式为 JSON 数组。</span>
                         </div>
                         <div class="form-group full-width">
-                            <label for="public-models">暴露的模型列表 (PUBLIC_MODEL_IDS_JSON)</label>
+                            <label for="public-models">公开暴露的模型 ID 列表 (PUBLIC_MODEL_IDS_JSON)</label>
                             <textarea id="public-models" class="code-editor" oninput="validateJson(this)" placeholder='["deepseek-chat", "deepseek-coder"]'></textarea>
                             <span class="json-error" id="public-models-error">JSON 格式不合法，需为数组</span>
-                            <span class="help-text">`/v1/models` 端点主动公开呈现的模型 ID 列表。格式为 JSON Array</span>
+                            <span class="help-text">限制 `/v1/models` 返回给客户端公开展示的模型。格式为 JSON 数组。</span>
                         </div>
                         <div class="form-group full-width">
                             <div class="switch-container">
                                 <div class="switch-label-desc">
-                                    <span class="switch-title">允许未映射模型穿透</span>
-                                    <span class="switch-desc">若启用，未在映射表中的模型名称也将直接转发至上游</span>
+                                    <span class="switch-title">允许未映射模型透传 (ALLOW_UNMAPPED_MODEL_PASSTHROUGH)</span>
+                                    <span class="switch-desc">启用后，未在映射表中的模型名称也将允许直接穿透转发。</span>
                                 </div>
                                 <label class="switch">
                                     <input type="checkbox" id="allow-unmapped">
@@ -638,7 +796,7 @@
 
                 <!-- Tab: Strategy -->
                 <div class="tab-panel" id="panel-strategy">
-                    <h2>🛡️ 工具调用策略</h2>
+                    <h2>🛡️ 工具调用策略配置</h2>
                     <div class="form-grid">
                         <div class="form-group full-width">
                             <div class="switch-container">
@@ -663,7 +821,7 @@
                         <div class="form-group full-width">
                             <label for="tool-preamble">自定义虚拟工具前导 Prompt (TOOL_PROMPT_PREAMBLE)</label>
                             <textarea id="tool-preamble" placeholder="（非必填）留空则使用内置前言模板"></textarea>
-                            <span class="help-text">用于告诉大模型当前会话挂载了工具，可自行微调指令</span>
+                            <span class="help-text">用来提示大模型当前可调用的工具 Schema 的系统指令前缀。</span>
                         </div>
                     </div>
                 </div>
@@ -676,14 +834,14 @@
                             <label for="extra-body">请求追加额外 JSON 字段 (UPSTREAM_EXTRA_BODY_JSON)</label>
                             <textarea id="extra-body" class="code-editor" oninput="validateJson(this)" placeholder='{"temperature": 0.5}'></textarea>
                             <span class="json-error" id="extra-body-error">JSON 格式不合法，需为对象</span>
-                            <span class="help-text">将被强行混入至每次发送至上游模型的 Request Body 中。格式为 JSON Object</span>
+                            <span class="help-text">会被强行追加到每次向上游转发的请求体中。格式为 JSON 对象。</span>
                         </div>
                         
                         <div class="form-group full-width" style="margin-top: 10px;">
                             <div class="switch-container">
                                 <div class="switch-label-desc">
                                     <span class="switch-title">开机自启功能</span>
-                                    <span class="switch-desc">在系统托盘管理器中启用开机自启。也可在此修改此项以登记/注销系统自启动。</span>
+                                    <span class="switch-desc">根据此配置项在当前操作系统上注册或注销开机启动指令。</span>
                                 </div>
                                 <label class="switch">
                                     <input type="checkbox" id="autostart-toggle">
@@ -705,12 +863,25 @@
     <div class="toast-container" id="toast-container"></div>
 
     <script>
+        // Data stores
+        let upstreamsList = [];
+        let modelRoutesMap = {};
+
         // Tab system
         function switchTab(tabId) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
             
-            const selectedBtn = Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.innerText.includes(tabId === 'dashboard' ? '状态概览' : tabId === 'network' ? '网络与连接' : tabId === 'mappings' ? '模型映射' : tabId === 'strategy' ? '工具调用策略' : '高级配置'));
+            const tabNameMap = {
+                'dashboard': '📊 状态概览',
+                'network': '🌐 网络与连接',
+                'multi-upstream': '🌐 多上游与路由',
+                'mappings': '🔄 模型映射',
+                'strategy': '🛡️ 工具调用策略',
+                'advanced': '⚙️ 高级配置'
+            };
+            
+            const selectedBtn = Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.innerText.includes(tabNameMap[tabId]));
             if (selectedBtn) selectedBtn.classList.add('active');
             
             const panel = document.getElementById(`panel-${tabId}`);
@@ -723,7 +894,7 @@
             const toast = document.createElement('div');
             toast.className = `toast toast-${type}`;
             
-            const icon = type === 'success' ? '✓' : '✗';
+            const icon = type === 'success' ? '✓' : type === 'warning' ? '⚠' : '✗';
             toast.innerHTML = `
                 <div class="toast-icon">${icon}</div>
                 <div class="toast-text">${message}</div>
@@ -735,7 +906,7 @@
             setTimeout(() => {
                 toast.classList.remove('show');
                 setTimeout(() => toast.remove(), 400);
-            }, 3000);
+            }, 3500);
         }
 
         // Validate JSON fields
@@ -749,9 +920,9 @@
             try {
                 const parsed = JSON.parse(val);
                 if (textarea.id === 'native-models' || textarea.id === 'public-models') {
-                    if (!Array.isArray(parsed)) throw new Error('Must be Array');
+                    if (!Array.isArray(parsed)) throw new Error('必须是 JSON 数组');
                 } else {
-                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('Must be Object');
+                    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('必须是 JSON 对象');
                 }
                 if (errSpan) errSpan.style.display = 'none';
                 return true;
@@ -762,6 +933,171 @@
                 }
                 return false;
             }
+        }
+
+        // Providers sub-panel CRUD
+        function showProviderForm(editIndex = -1) {
+            const block = document.getElementById('provider-form-block');
+            block.style.display = 'block';
+            
+            if (editIndex >= 0) {
+                document.getElementById('provider-form-title').innerText = '编辑服务商';
+                document.getElementById('prov-edit-index').value = editIndex;
+                const p = upstreamsList[editIndex];
+                document.getElementById('prov-id').value = p.id;
+                document.getElementById('prov-id').disabled = true;
+                document.getElementById('prov-name').value = p.name || '';
+                document.getElementById('prov-url').value = p.url || '';
+                document.getElementById('prov-auth').value = p.auth || '';
+                document.getElementById('prov-timeout').value = p.timeout || 240;
+            } else {
+                document.getElementById('provider-form-title').innerText = '新增服务商';
+                document.getElementById('prov-edit-index').value = -1;
+                document.getElementById('prov-id').value = '';
+                document.getElementById('prov-id').disabled = false;
+                document.getElementById('prov-name').value = '';
+                document.getElementById('prov-url').value = '';
+                document.getElementById('prov-auth').value = '';
+                document.getElementById('prov-timeout').value = 240;
+            }
+        }
+
+        function hideProviderForm() {
+            document.getElementById('provider-form-block').style.display = 'none';
+        }
+
+        function saveProviderLocal() {
+            const id = document.getElementById('prov-id').value.trim();
+            const name = document.getElementById('prov-name').value.trim() || id;
+            const url = document.getElementById('prov-url').value.trim();
+            const auth = document.getElementById('prov-auth').value.trim();
+            const timeout = parseInt(document.getElementById('prov-timeout').value) || 240;
+            const editIndex = parseInt(document.getElementById('prov-edit-index').value);
+
+            if (!id || !url) {
+                showToast('ID 和接口 URL 不能为空', 'error');
+                return;
+            }
+            if (id.includes(' ')) {
+                showToast('服务商 ID 不能包含空格', 'error');
+                return;
+            }
+
+            const newProv = { id, name, url, auth, timeout };
+
+            if (editIndex >= 0) {
+                upstreamsList[editIndex] = newProv;
+                showToast('已更新本地服务商数据');
+            } else {
+                if (upstreamsList.some(p => p.id === id)) {
+                    showToast('已存在相同 ID 的服务商', 'error');
+                    return;
+                }
+                upstreamsList.push(newProv);
+                showToast('已新增本地服务商');
+            }
+
+            hideProviderForm();
+            renderProvidersTable();
+            populateProviderSelect();
+        }
+
+        function deleteProviderLocal(index) {
+            const p = upstreamsList[index];
+            // Remove routing rules associated with this provider
+            for (let model in modelRoutesMap) {
+                if (modelRoutesMap[model] === p.id) {
+                    delete modelRoutesMap[model];
+                }
+            }
+            upstreamsList.splice(index, 1);
+            showToast(`已删除上游服务商 [${p.id}]`);
+            renderProvidersTable();
+            renderRoutesTable();
+            populateProviderSelect();
+        }
+
+        function renderProvidersTable() {
+            const tbody = document.getElementById('providers-table-body');
+            if (upstreamsList.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-secondary);">暂无配置的独立服务商</td></tr>';
+                return;
+            }
+            tbody.innerHTML = '';
+            upstreamsList.forEach((p, idx) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-weight: 500; color: #fff;">${p.id}</td>
+                    <td>${p.name}</td>
+                    <td style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary);">${p.url}</td>
+                    <td>${p.timeout}</td>
+                    <td style="text-align: right;">
+                        <button type="button" class="action-btn edit" onclick="showProviderForm(${idx})">✏️</button>
+                        <button type="button" class="action-btn delete" onclick="deleteProviderLocal(${idx})">🗑️</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Routing Rules logic
+        function populateProviderSelect() {
+            const select = document.getElementById('route-provider-select');
+            select.innerHTML = '<option value="">-- 请选择目标服务商 --</option>';
+            upstreamsList.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.innerText = `${p.name} (${p.id})`;
+                select.appendChild(opt);
+            });
+        }
+
+        function addRouteLocal() {
+            const modelName = document.getElementById('route-model').value.trim();
+            const providerId = document.getElementById('route-provider-select').value;
+
+            if (!modelName || !providerId) {
+                showToast('模型 ID 和目标服务商不能为空', 'error');
+                return;
+            }
+
+            modelRoutesMap[modelName] = providerId;
+            showToast(`已将模型 [${modelName}] 的请求路由指向 [${providerId}]`);
+            
+            document.getElementById('route-model').value = '';
+            document.getElementById('route-provider-select').value = '';
+            renderRoutesTable();
+        }
+
+        function deleteRouteLocal(modelName) {
+            delete modelRoutesMap[modelName];
+            showToast(`已取消模型 [${modelName}] 的路由分流规则`);
+            renderRoutesTable();
+        }
+
+        function renderRoutesTable() {
+            const tbody = document.getElementById('routes-table-body');
+            const models = Object.keys(modelRoutesMap);
+            if (models.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-secondary);">暂无分流规则，所有请求均指向默认上游</td></tr>';
+                return;
+            }
+            tbody.innerHTML = '';
+            models.forEach(modelName => {
+                const provId = modelRoutesMap[modelName];
+                const prov = upstreamsList.find(p => p.id === provId);
+                const provUrl = prov ? prov.url : '（未知或已失效的上游服务商）';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-weight: 500; color: #fff; font-family: 'Fira Code', monospace;">${modelName}</td>
+                    <td><span style="background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59,130,246,0.3); padding: 2px 8px; border-radius: 4px; color: #60a5fa; font-size: 12px;">${provId}</span></td>
+                    <td style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary);">${provUrl}</td>
+                    <td style="text-align: right;">
+                        <button type="button" class="action-btn delete" onclick="deleteRouteLocal('${modelName}')">🗑️</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
         }
 
         // Fetch settings from server
@@ -790,6 +1126,13 @@
                 const modelMapKeysCount = Object.keys(data.MODEL_MAP_JSON || {}).length;
                 document.getElementById('mapped-models-count').innerText = `${modelMapKeysCount} 个`;
 
+                // Multi upstreams loading
+                upstreamsList = data.UPSTREAMS_JSON || [];
+                modelRoutesMap = data.MODEL_ROUTES_JSON || {};
+                renderProvidersTable();
+                renderRoutesTable();
+                populateProviderSelect();
+
                 // Strategy inputs
                 document.getElementById('fc-error-retry').checked = data.FC_ERROR_RETRY !== false;
                 document.getElementById('fc-retry-attempts').value = data.FC_ERROR_RETRY_MAX_ATTEMPTS || 3;
@@ -805,7 +1148,7 @@
                 // Load status & autostart status
                 fetchStatus();
 
-                showToast('配置已拉取成功');
+                showToast('配置已从服务器重新同步拉取');
             } catch (err) {
                 showToast(`数据加载失败: ${err.message}`, 'error');
             }
@@ -818,6 +1161,7 @@
                 if (!res.ok) throw new Error();
                 const data = await res.json();
                 
+                // Default upstream latency
                 const pingVal = data.upstream_latency_ms;
                 const pingEl = document.getElementById('upstream-ping');
                 if (pingVal !== null && pingVal !== undefined) {
@@ -828,6 +1172,39 @@
                     pingEl.style.color = 'var(--danger)';
                 }
 
+                // Multiple upstreams latencies widgets list
+                const latencyGrid = document.getElementById('multi-latency-grid');
+                if (latencyGrid) {
+                    if (upstreamsList.length === 0) {
+                        latencyGrid.innerHTML = '<div style="grid-column: span 4; text-align: center; color: var(--text-secondary); font-size: 13px; padding: 10px;">尚未添加任何多路分发服务商</div>';
+                    } else {
+                        latencyGrid.innerHTML = '';
+                        const lats = data.provider_latencies || {};
+                        upstreamsList.forEach(p => {
+                            const latVal = lats[p.id];
+                            const card = document.createElement('div');
+                            card.className = 'widget-card';
+                            card.style.padding = '15px';
+                            
+                            let latText = '检测中...';
+                            let latColor = 'var(--text-secondary)';
+                            if (latVal !== null && latVal !== undefined) {
+                                latText = `${latVal} ms`;
+                                latColor = latVal < 150 ? 'var(--success)' : latVal < 500 ? 'var(--warning)' : 'var(--danger)';
+                            } else {
+                                latText = '检测超时';
+                                latColor = 'var(--danger)';
+                            }
+                            
+                            card.innerHTML = `
+                                <span class="widget-title" style="font-size: 10px; font-weight: 600;">上游: [${p.name}]</span>
+                                <span class="widget-value" style="font-size: 18px; color: ${latColor}">${latText}</span>
+                            `;
+                            latencyGrid.appendChild(card);
+                        });
+                    }
+                }
+
                 document.getElementById('autostart-status').innerText = data.autostart_enabled ? '已开启' : '已关闭';
                 document.getElementById('autostart-toggle').checked = data.autostart_enabled;
 
@@ -835,7 +1212,7 @@
                 document.getElementById('server-status-text').innerText = `服务正在监听端口 ${data.port}`;
             } catch (err) {
                 document.getElementById('server-status-dot').className = 'status-dot inactive';
-                document.getElementById('server-status-text').innerText = '连接服务器失败...';
+                document.getElementById('server-status-text').innerText = '与本地代理失去连接...';
             }
         }
 
@@ -849,7 +1226,7 @@
                 if (!validateJson(el)) hasError = true;
             });
             if (hasError) {
-                showToast('存在不合法的 JSON 字段配置，请核对', 'error');
+                showToast('存在不合法的 JSON 配置，请修正后再保存', 'error');
                 return;
             }
 
@@ -873,6 +1250,8 @@
                 RETRY_DELAY_SECONDS: parseFloat(document.getElementById('retry-delay').value),
                 TOOL_PROMPT_PREAMBLE: document.getElementById('tool-preamble').value.trim(),
                 UPSTREAM_EXTRA_BODY_JSON: extraBody,
+                UPSTREAMS_JSON: upstreamsList,
+                MODEL_ROUTES_JSON: modelRoutesMap,
                 autostart: document.getElementById('autostart-toggle').checked
             };
 
@@ -886,14 +1265,14 @@
                 if (!res.ok) throw new Error('保存配置响应异常');
                 const result = await res.json();
                 
-                showToast('配置保存并重载成功！');
+                showToast('所有配置已成功保存并立即加载！');
                 if (result.port_changed) {
-                    showToast('检测到本地监听端口发生变更，请稍后使用新端口重新访问控制台', 'warning');
+                    showToast('本地监听端口已变更，服务正在重启，请使用新端口访问！', 'warning');
                 }
                 
-                setTimeout(fetchSettings, 500);
+                setTimeout(fetchSettings, 800);
             } catch (err) {
-                showToast(`保存失败: ${err.message}`, 'error');
+                showToast(`保存配置失败: ${err.message}`, 'error');
             }
         }
 

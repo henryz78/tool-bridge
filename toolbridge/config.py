@@ -67,6 +67,8 @@ class Settings:
     retry_on_parse_failure: bool = True
     max_retry_attempts: int = 3
     retry_delay_seconds: float = 0.0
+    upstreams: list[dict] = field(default_factory=list)
+    model_routes: dict[str, str] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Model resolution helpers
@@ -87,7 +89,29 @@ class Settings:
     def get_exposed_models(self) -> list[str]:
         from .model_map import collect_exposed_ids
 
-        return collect_exposed_ids(self.name_mapping, self.native_tool_model_ids, self.exposed_model_ids)
+        base = collect_exposed_ids(self.name_mapping, self.native_tool_model_ids, self.exposed_model_ids)
+        seen = set(base)
+        result = list(base)
+        for m in self.model_routes:
+            if m not in seen:
+                seen.add(m)
+                result.append(m)
+        return result
+
+    def get_upstream_config(self, model: str) -> tuple[str, str, int]:
+        """Return (url, auth, timeout) for the given model."""
+        if not model:
+            return self.upstream_url, self.upstream_auth, self.upstream_timeout
+        provider_id = self.model_routes.get(model)
+        if provider_id:
+            for p in self.upstreams:
+                if p.get("id") == provider_id:
+                    return (
+                        str(p.get("url", self.upstream_url)),
+                        str(p.get("auth", self.upstream_auth)),
+                        int(p.get("timeout", self.upstream_timeout))
+                    )
+        return self.upstream_url, self.upstream_auth, self.upstream_timeout
 
     # ------------------------------------------------------------------
     # Serialization (for GUI config file)
@@ -108,6 +132,8 @@ class Settings:
         "retry_on_parse_failure": "FC_ERROR_RETRY",
         "max_retry_attempts": "FC_ERROR_RETRY_MAX_ATTEMPTS",
         "retry_delay_seconds": "RETRY_DELAY_SECONDS",
+        "upstreams": "UPSTREAMS_JSON",
+        "model_routes": "MODEL_ROUTES_JSON",
     }
 
     def to_dict(self) -> dict:
@@ -138,6 +164,8 @@ class Settings:
             retry_on_parse_failure=bool(data.get("FC_ERROR_RETRY", True)),
             max_retry_attempts=int(data.get("FC_ERROR_RETRY_MAX_ATTEMPTS", 3)),
             retry_delay_seconds=float(data.get("RETRY_DELAY_SECONDS", 0)),
+            upstreams=list(data.get("UPSTREAMS_JSON", [])),
+            model_routes=dict(data.get("MODEL_ROUTES_JSON", {})),
         )
 
     # ------------------------------------------------------------------
@@ -161,4 +189,6 @@ class Settings:
             retry_on_parse_failure=_env_bool("FC_ERROR_RETRY", True),
             max_retry_attempts=_env_int("FC_ERROR_RETRY_MAX_ATTEMPTS", 3),
             retry_delay_seconds=float(os.environ.get("RETRY_DELAY_SECONDS", "0")),
+            upstreams=_env_json_list("UPSTREAMS_JSON"),
+            model_routes=_env_json_dict("MODEL_ROUTES_JSON"),
         )

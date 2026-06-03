@@ -163,13 +163,16 @@ def _stream_virtual_tool_call(
     from .proxy import open_upstream_connection, build_upstream_headers
     import urllib.parse
 
-    conn = open_upstream_connection(settings)
-    parsed = urllib.parse.urlparse(settings.upstream_url)
+    model = body.get("model", "")
+    url, auth, timeout = settings.get_upstream_config(model)
+
+    conn = open_upstream_connection(settings, url=url, timeout=timeout)
+    parsed = urllib.parse.urlparse(url)
     base_path = parsed.path.rstrip("/")
     path = base_path + "/v1/chat/completions"
 
     raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    headers = build_upstream_headers(None, settings)
+    headers = build_upstream_headers(None, settings, auth=auth)
     conn.request("POST", path, body=raw_body, headers=headers)
     resp = conn.getresponse()
 
@@ -386,13 +389,16 @@ def _passthrough_anthropic_stream(
     from .proxy import open_upstream_connection, build_upstream_headers
     import urllib.parse
 
-    conn = open_upstream_connection(settings)
-    parsed = urllib.parse.urlparse(settings.upstream_url)
+    model = requested_model
+    url, auth, timeout = settings.get_upstream_config(model)
+
+    conn = open_upstream_connection(settings, url=url, timeout=timeout)
+    parsed = urllib.parse.urlparse(url)
     base_path = parsed.path.rstrip("/")
     path = base_path + "/v1/chat/completions"
 
     raw_body = json.dumps(openai_payload, ensure_ascii=False).encode("utf-8")
-    headers = build_upstream_headers(None, settings)
+    headers = build_upstream_headers(None, settings, auth=auth)
     conn.request("POST", path, body=raw_body, headers=headers)
     resp = conn.getresponse()
 
@@ -576,6 +582,8 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
         settings.retry_on_parse_failure = bool(body.get("FC_ERROR_RETRY", settings.retry_on_parse_failure))
         settings.max_retry_attempts = int(body.get("FC_ERROR_RETRY_MAX_ATTEMPTS", settings.max_retry_attempts))
         settings.retry_delay_seconds = float(body.get("RETRY_DELAY_SECONDS", settings.retry_delay_seconds))
+        settings.upstreams = list(body.get("UPSTREAMS_JSON", settings.upstreams))
+        settings.model_routes = dict(body.get("MODEL_ROUTES_JSON", settings.model_routes))
 
         save_config(settings.to_dict())
 
@@ -618,11 +626,21 @@ def _ping_upstream(url: str, timeout: int = 2) -> float | None:
 def handle_api_status(handler: Any, settings: Settings) -> None:
     from .autostart import is_autostart_enabled
     latency = _ping_upstream(settings.upstream_url)
+    
+    # Ping other providers
+    provider_latencies = {}
+    for p in settings.upstreams:
+        p_id = p.get("id")
+        p_url = p.get("url")
+        if p_id and p_url:
+            provider_latencies[p_id] = _ping_upstream(p_url)
+
     _send_json(handler, 200, {
         "status": "running",
         "port": settings.listen_port,
         "host": settings.listen_host,
         "upstream_latency_ms": latency,
+        "provider_latencies": provider_latencies,
         "autostart_enabled": is_autostart_enabled()
     })
 
