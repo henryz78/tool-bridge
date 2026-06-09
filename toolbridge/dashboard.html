@@ -665,8 +665,8 @@
                     <div class="form-grid">
                         <div class="form-group">
                             <label for="host">监听主机地址 (HOST)</label>
-                            <input type="text" id="host" required placeholder="0.0.0.0">
-                            <span class="help-text">默认为 0.0.0.0（允许局域网访问）</span>
+                            <input type="text" id="host" required placeholder="127.0.0.1">
+                            <span class="help-text">默认为 127.0.0.1（仅本机访问）；局域网/公网绑定需配置 ADMIN_TOKEN 与 BRIDGE_API_KEY</span>
                         </div>
                         <div class="form-group">
                             <label for="port">监听端口 (PORT)</label>
@@ -1388,7 +1388,7 @@
                 const data = await res.json();
                 
                 // Connection inputs
-                document.getElementById('host').value = data.HOST || '0.0.0.0';
+                document.getElementById('host').value = data.HOST || '127.0.0.1';
                 document.getElementById('port').value = data.PORT || 8080;
                 document.getElementById('upstream-url').value = data.UPSTREAM_BASE_URL || '';
                 document.getElementById('upstream-auth').value = data.UPSTREAM_AUTH_HEADER || '';

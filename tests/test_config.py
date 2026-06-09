@@ -64,7 +64,7 @@ class TestSettings(unittest.TestCase):
                      "FC_ERROR_RETRY", "FC_ERROR_RETRY_MAX_ATTEMPTS", "RETRY_DELAY_SECONDS"]:
             os.environ.pop(key, None)
         s = Settings.from_environment()
-        self.assertEqual(s.listen_host, "0.0.0.0")
+        self.assertEqual(s.listen_host, "127.0.0.1")
         self.assertEqual(s.listen_port, 8080)
         self.assertEqual(s.upstream_url, "http://127.0.0.1:3000")
         self.assertTrue(s.allow_unmapped)

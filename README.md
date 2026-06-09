@@ -90,7 +90,7 @@ python -m toolbridge --desktop
 
 | 环境变量 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `HOST` | `0.0.0.0` | 服务的监听主机地址 |
+| `HOST` | `127.0.0.1` | 服务的监听主机地址；设置为 `0.0.0.0`、局域网 IP 或域名时必须同时配置 `ADMIN_TOKEN` 与 `BRIDGE_API_KEY` |
 | `PORT` | `8080` | 服务的监听端口 |
 | `UPSTREAM_BASE_URL` | `http://127.0.0.1:3000` | 上游模型的 API 基础地址 |
 | `UPSTREAM_AUTH_HEADER` | (空) | 转发给上游的 `Authorization` 请求头 |

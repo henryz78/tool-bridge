@@ -147,6 +147,25 @@ class TestSettingsRoutes(unittest.TestCase):
         self.assertEqual(saved_configs[0]["ADMIN_TOKEN"], "admin-secret")
         self.assertEqual(saved_configs[0]["BRIDGE_API_KEY"], "bridge-secret")
 
+    def test_settings_post_rejects_public_bind_without_required_tokens(self) -> None:
+        payload = {
+            "HOST": "0.0.0.0",
+            "PORT": 9876,
+            "ADMIN_TOKEN": "admin-secret",
+            "BRIDGE_API_KEY": "",
+        }
+        handler = FakeHandler(payload)
+        settings = Settings(listen_host="127.0.0.1", listen_port=9876)
+        handler.server.settings = settings
+
+        with mock.patch("toolbridge.config_file.save_config") as save_config:
+            handle_api_settings_post(handler, settings)
+
+        self.assertEqual(handler.response_status, 400)
+        self.assertIn("BRIDGE_API_KEY", handler.json_response()["error"])
+        self.assertEqual(handler.server.settings.listen_host, "127.0.0.1")
+        save_config.assert_not_called()
+
 
 class TestStatusRoute(unittest.TestCase):
     def test_status_returns_cached_latency_and_autostart_state(self) -> None:

@@ -7,6 +7,7 @@ import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from .auth import validate_public_bind_auth
 from .config import Settings
 from .router import dispatch
 
@@ -55,6 +56,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 def create_server(settings: Settings) -> BridgeServer:
     """Create and return a BridgeServer instance."""
+    validate_public_bind_auth(settings)
     return BridgeServer(
         (settings.listen_host, settings.listen_port),
         BridgeHandler,

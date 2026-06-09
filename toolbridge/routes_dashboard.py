@@ -116,6 +116,13 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
         })
 
         new_settings = Settings.from_dict(merged)
+        from .auth import validate_public_bind_auth
+        try:
+            validate_public_bind_auth(new_settings)
+        except ValueError as exc:
+            send_json(handler, 400, {"error": str(exc)}, cors=False)
+            return
+
         save_config(new_settings.to_dict())
 
         handler.server.settings = new_settings

@@ -194,7 +194,7 @@ class Settings:
     @classmethod
     def from_environment(cls) -> Settings:
         return cls(
-            listen_host=_env_str("HOST", "0.0.0.0"),
+            listen_host=_env_str("HOST", "127.0.0.1"),
             listen_port=_env_int("PORT", 8080),
             upstream_url=_env_str("UPSTREAM_BASE_URL", "http://127.0.0.1:3000"),
             upstream_timeout=_env_int("UPSTREAM_TIMEOUT_SECONDS", 240),
