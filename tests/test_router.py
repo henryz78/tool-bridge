@@ -15,12 +15,14 @@ from toolbridge.virtual_tools import ParseOutcome, ToolInvocation
 
 
 class FakeHandler:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, headers: dict | None = None):
         raw = json.dumps(payload).encode("utf-8")
         self.headers = {
             "Content-Type": "application/json",
             "Content-Length": str(len(raw)),
         }
+        if headers:
+            self.headers.update(headers)
         self.rfile = io.BytesIO(raw)
         self.wfile = io.BytesIO()
         self.response_status: int | None = None
@@ -439,6 +441,44 @@ class TestDispatchErrorHandling(unittest.TestCase):
         self.assertEqual(handler.json_response(), {
             "error": {"type": "rate_limit_error", "message": "too many requests"}
         })
+
+
+class TestDispatchAuthentication(unittest.TestCase):
+    def test_admin_routes_require_admin_token_when_configured(self) -> None:
+        handler = FakeHandler({})
+        settings = Settings(admin_token="admin-secret")
+
+        dispatch(handler, settings, "GET", "/api/settings", None)
+
+        self.assertEqual(handler.response_status, 401)
+        self.assertEqual(handler.json_response(), {"error": "admin authentication required"})
+
+    def test_admin_routes_allow_matching_admin_token_header(self) -> None:
+        handler = FakeHandler({}, headers={"X-Admin-Token": "admin-secret"})
+        settings = Settings(admin_token="admin-secret", listen_port=9876)
+
+        dispatch(handler, settings, "GET", "/api/settings", None)
+
+        self.assertEqual(handler.response_status, 200)
+        self.assertEqual(handler.json_response()["PORT"], 9876)
+
+    def test_bridge_routes_require_bridge_api_key_when_configured(self) -> None:
+        handler = FakeHandler({})
+        settings = Settings(bridge_api_key="bridge-secret")
+
+        dispatch(handler, settings, "GET", "/v1/models", None)
+
+        self.assertEqual(handler.response_status, 401)
+        self.assertEqual(handler.json_response(), {"error": "bridge authentication required"})
+
+    def test_bridge_routes_allow_matching_bearer_token(self) -> None:
+        handler = FakeHandler({}, headers={"Authorization": "Bearer bridge-secret"})
+        settings = Settings(bridge_api_key="bridge-secret", exposed_model_ids=["public-chat"])
+
+        dispatch(handler, settings, "GET", "/v1/models", None)
+
+        self.assertEqual(handler.response_status, 200)
+        self.assertEqual(handler.json_response()["data"][0]["id"], "public-chat")
 
 
 if __name__ == "__main__":

@@ -76,6 +76,8 @@ class TestSettings(unittest.TestCase):
         os.environ["NATIVE_TOOL_MODELS_JSON"] = '["b"]'
         os.environ["FC_ERROR_RETRY"] = "false"
         os.environ["FC_ERROR_RETRY_MAX_ATTEMPTS"] = "5"
+        os.environ["ADMIN_TOKEN"] = "admin-secret"
+        os.environ["BRIDGE_API_KEY"] = "bridge-secret"
         s = Settings.from_environment()
         self.assertEqual(s.listen_port, 9999)
         self.assertEqual(s.upstream_url, "http://example.com:4000")
@@ -83,9 +85,12 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(s.native_tool_model_ids, {"b"})
         self.assertFalse(s.retry_on_parse_failure)
         self.assertEqual(s.max_retry_attempts, 5)
+        self.assertEqual(s.admin_token, "admin-secret")
+        self.assertEqual(s.bridge_api_key, "bridge-secret")
         for key in ["PORT", "UPSTREAM_BASE_URL", "MODEL_MAP_JSON",
                      "NATIVE_TOOL_MODELS_JSON", "FC_ERROR_RETRY",
-                     "FC_ERROR_RETRY_MAX_ATTEMPTS"]:
+                     "FC_ERROR_RETRY_MAX_ATTEMPTS", "ADMIN_TOKEN",
+                     "BRIDGE_API_KEY"]:
             del os.environ[key]
 
     def test_resolve_model_name(self):
@@ -112,6 +117,19 @@ class TestSettings(unittest.TestCase):
         self.assertIn("a", models)
         self.assertIn("c", models)
         self.assertIn("b", models)
+
+    def test_to_dict_can_redact_secrets(self):
+        s = Settings(
+            upstream_auth="provider-token",
+            admin_token="admin-secret",
+            bridge_api_key="bridge-secret",
+            upstreams=[{"id": "p1", "auth": "provider-token"}],
+        )
+        data = s.to_dict(redact_secrets=True)
+        self.assertEqual(data["UPSTREAM_AUTH_HEADER"], "********")
+        self.assertEqual(data["ADMIN_TOKEN"], "********")
+        self.assertEqual(data["BRIDGE_API_KEY"], "********")
+        self.assertEqual(data["UPSTREAMS_JSON"][0]["auth"], "********")
 
 
 if __name__ == "__main__":

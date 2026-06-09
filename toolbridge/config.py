@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass, field
 from typing import ClassVar
 
+SECRET_MASK = "********"
+
 
 def _env_bool(key: str, default: bool = False) -> bool:
     raw = os.environ.get(key, "")
@@ -69,6 +71,8 @@ class Settings:
     retry_delay_seconds: float = 0.0
     upstreams: list[dict] = field(default_factory=list)
     model_routes: dict[str, str] = field(default_factory=dict)
+    admin_token: str = ""
+    bridge_api_key: str = ""
 
     # ------------------------------------------------------------------
     # Model resolution helpers
@@ -143,9 +147,11 @@ class Settings:
         "retry_delay_seconds": "RETRY_DELAY_SECONDS",
         "upstreams": "UPSTREAMS_JSON",
         "model_routes": "MODEL_ROUTES_JSON",
+        "admin_token": "ADMIN_TOKEN",
+        "bridge_api_key": "BRIDGE_API_KEY",
     }
 
-    def to_dict(self) -> dict:
+    def to_dict(self, redact_secrets: bool = False) -> dict:
         """Export settings as a dict using env-var-style keys."""
         out: dict = {}
         for field_name, env_key in self._FIELD_TO_ENV.items():
@@ -153,6 +159,8 @@ class Settings:
             if isinstance(val, set):
                 val = sorted(val)
             out[env_key] = val
+        if redact_secrets:
+            out = _redact_secrets(out)
         return out
 
     @classmethod
@@ -175,6 +183,8 @@ class Settings:
             retry_delay_seconds=float(data.get("RETRY_DELAY_SECONDS", 0)),
             upstreams=list(data.get("UPSTREAMS_JSON", [])),
             model_routes=dict(data.get("MODEL_ROUTES_JSON", {})),
+            admin_token=str(data.get("ADMIN_TOKEN", "")),
+            bridge_api_key=str(data.get("BRIDGE_API_KEY", "")),
         )
 
     # ------------------------------------------------------------------
@@ -200,4 +210,25 @@ class Settings:
             retry_delay_seconds=float(os.environ.get("RETRY_DELAY_SECONDS", "0")),
             upstreams=_env_json_list("UPSTREAMS_JSON"),
             model_routes=_env_json_dict("MODEL_ROUTES_JSON"),
+            admin_token=_env_str("ADMIN_TOKEN"),
+            bridge_api_key=_env_str("BRIDGE_API_KEY"),
         )
+
+
+def _redact_secrets(data: dict) -> dict:
+    redacted = dict(data)
+    for key in ("UPSTREAM_AUTH_HEADER", "ADMIN_TOKEN", "BRIDGE_API_KEY"):
+        if redacted.get(key):
+            redacted[key] = SECRET_MASK
+
+    upstreams = []
+    for provider in redacted.get("UPSTREAMS_JSON", []):
+        if isinstance(provider, dict):
+            item = dict(provider)
+            if item.get("auth"):
+                item["auth"] = SECRET_MASK
+            upstreams.append(item)
+        else:
+            upstreams.append(provider)
+    redacted["UPSTREAMS_JSON"] = upstreams
+    return redacted

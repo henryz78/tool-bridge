@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from .config import Settings
+from .auth import admin_authorized, bridge_authorized
 from .errors import BridgeError, UpstreamError, ParseError
 from .format_openai import normalize_messages, normalize_tool_calls
 from .format_anthropic import convert_anthropic_to_openai, convert_openai_to_anthropic, anthropic_usage
@@ -623,6 +624,13 @@ def dispatch(handler: Any, settings: Settings, method: str, path: str, body: byt
     handler_fn = _ROUTE_TABLE.get(key)
 
     try:
+        if clean_path.startswith("/api/") and not admin_authorized(handler, settings):
+            _send_json(handler, 401, {"error": "admin authentication required"}, cors=False)
+            return
+        if (clean_path == "/v1" or clean_path.startswith("/v1/")) and not bridge_authorized(handler, settings):
+            _send_json(handler, 401, {"error": "bridge authentication required"})
+            return
+
         if handler_fn:
             handler_fn(handler, settings)
         else:

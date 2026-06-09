@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from .config import Settings
+from .config import SECRET_MASK, Settings
 from .http_utils import read_json_body, send_json
 
 
@@ -31,7 +31,7 @@ def handle_dashboard(handler: Any, settings: Settings) -> None:
 
 
 def handle_api_settings_get(handler: Any, settings: Settings) -> None:
-    send_json(handler, 200, settings.to_dict(), cors=False)
+    send_json(handler, 200, settings.to_dict(redact_secrets=True), cors=False)
 
 
 def handle_api_settings_post(handler: Any, settings: Settings) -> None:
@@ -90,12 +90,16 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
                 sock.close()
 
         merged = settings.to_dict()
+        upstream_auth = _secret_value(body, "UPSTREAM_AUTH_HEADER", settings.upstream_auth)
+        admin_token = _secret_value(body, "ADMIN_TOKEN", settings.admin_token)
+        bridge_api_key = _secret_value(body, "BRIDGE_API_KEY", settings.bridge_api_key)
+        upstreams = _merge_upstream_secrets(body.get("UPSTREAMS_JSON", settings.upstreams), settings.upstreams)
         merged.update({
             "HOST": host,
             "PORT": new_port,
             "UPSTREAM_BASE_URL": str(body.get("UPSTREAM_BASE_URL", settings.upstream_url)),
             "UPSTREAM_TIMEOUT_SECONDS": upstream_timeout,
-            "UPSTREAM_AUTH_HEADER": str(body.get("UPSTREAM_AUTH_HEADER", settings.upstream_auth)),
+            "UPSTREAM_AUTH_HEADER": upstream_auth,
             "UPSTREAM_EXTRA_BODY_JSON": body.get("UPSTREAM_EXTRA_BODY_JSON", settings.upstream_extra_fields),
             "MODEL_MAP_JSON": body.get("MODEL_MAP_JSON", settings.name_mapping),
             "ALLOW_UNMAPPED_MODEL_PASSTHROUGH": bool(body.get("ALLOW_UNMAPPED_MODEL_PASSTHROUGH", settings.allow_unmapped)),
@@ -105,8 +109,10 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
             "FC_ERROR_RETRY": bool(body.get("FC_ERROR_RETRY", settings.retry_on_parse_failure)),
             "FC_ERROR_RETRY_MAX_ATTEMPTS": max_retry_attempts,
             "RETRY_DELAY_SECONDS": retry_delay_seconds,
-            "UPSTREAMS_JSON": list(body.get("UPSTREAMS_JSON", settings.upstreams)),
+            "UPSTREAMS_JSON": upstreams,
             "MODEL_ROUTES_JSON": dict(body.get("MODEL_ROUTES_JSON", settings.model_routes)),
+            "ADMIN_TOKEN": admin_token,
+            "BRIDGE_API_KEY": bridge_api_key,
         })
 
         new_settings = Settings.from_dict(merged)
@@ -123,6 +129,29 @@ def handle_api_settings_post(handler: Any, settings: Settings) -> None:
         send_json(handler, 200, {"ok": True, "port_changed": port_changed}, cors=False)
     except Exception as exc:
         send_json(handler, 500, {"error": f"Failed to save settings: {exc}"}, cors=False)
+
+
+def _secret_value(body: dict, key: str, current: str) -> str:
+    if key not in body:
+        return current
+    value = str(body.get(key, ""))
+    if value == SECRET_MASK:
+        return current
+    return value
+
+
+def _merge_upstream_secrets(incoming: Any, current: list[dict]) -> list[dict]:
+    current_by_id = {str(p.get("id", "")): p for p in current if isinstance(p, dict)}
+    result: list[dict] = []
+    for provider in list(incoming or []):
+        if not isinstance(provider, dict):
+            continue
+        item = dict(provider)
+        current_provider = current_by_id.get(str(item.get("id", "")), {})
+        if item.get("auth") == SECRET_MASK:
+            item["auth"] = str(current_provider.get("auth", ""))
+        result.append(item)
+    return result
 
 
 def _ping_upstream(url: str, timeout: int = 2) -> float | None:

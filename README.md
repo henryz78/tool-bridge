@@ -94,6 +94,8 @@ python -m toolbridge --desktop
 | `PORT` | `8080` | 服务的监听端口 |
 | `UPSTREAM_BASE_URL` | `http://127.0.0.1:3000` | 上游模型的 API 基础地址 |
 | `UPSTREAM_AUTH_HEADER` | (空) | 转发给上游的 `Authorization` 请求头 |
+| `ADMIN_TOKEN` | (空) | 管理 API 访问令牌；设置后 `/api/settings`、`/api/status`、`/api/upstream/models` 需要 `X-Admin-Token` 或 `Authorization: Bearer ...` |
+| `BRIDGE_API_KEY` | (空) | `/v1/*` 代理接口访问令牌；设置后客户端需使用 `Authorization: Bearer ...` 或 `X-Bridge-Api-Key` |
 | `UPSTREAM_TIMEOUT_SECONDS` | `240` | 请求上游的超时时间（秒） |
 | `MODEL_MAP_JSON` | `{}` | 模型名称映射关系 JSON，如 `{"gpt-4": "deepseek-chat"}` |
 | `ALLOW_UNMAPPED_MODEL_PASSTHROUGH` | `true` | 是否允许未配置映射的模型直接直通转发 |

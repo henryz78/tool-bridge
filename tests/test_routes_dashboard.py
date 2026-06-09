@@ -62,12 +62,24 @@ class FakeModelsResponse:
 class TestSettingsRoutes(unittest.TestCase):
     def test_settings_get_returns_serialized_settings_without_cors(self) -> None:
         handler = FakeHandler()
-        settings = Settings(listen_host="127.0.0.1", listen_port=9876)
+        settings = Settings(
+            listen_host="127.0.0.1",
+            listen_port=9876,
+            upstream_auth="provider-token",
+            admin_token="admin-secret",
+            bridge_api_key="bridge-secret",
+            upstreams=[{"id": "provider-a", "auth": "provider-token"}],
+        )
 
         handle_api_settings_get(handler, settings)
 
         self.assertEqual(handler.response_status, 200)
-        self.assertEqual(handler.json_response()["PORT"], 9876)
+        payload = handler.json_response()
+        self.assertEqual(payload["PORT"], 9876)
+        self.assertEqual(payload["UPSTREAM_AUTH_HEADER"], "********")
+        self.assertEqual(payload["ADMIN_TOKEN"], "********")
+        self.assertEqual(payload["BRIDGE_API_KEY"], "********")
+        self.assertEqual(payload["UPSTREAMS_JSON"][0]["auth"], "********")
         header_names = {name for name, _value in handler.response_headers}
         self.assertNotIn("Access-Control-Allow-Origin", header_names)
 
@@ -105,6 +117,35 @@ class TestSettingsRoutes(unittest.TestCase):
         self.assertEqual(saved_configs[0]["UPSTREAM_BASE_URL"], "http://provider.example/api")
         header_names = {name for name, _value in handler.response_headers}
         self.assertNotIn("Access-Control-Allow-Origin", header_names)
+
+    def test_settings_post_preserves_masked_secret_values(self) -> None:
+        payload = {
+            "UPSTREAM_AUTH_HEADER": "********",
+            "ADMIN_TOKEN": "********",
+            "BRIDGE_API_KEY": "********",
+            "UPSTREAMS_JSON": [{"id": "provider-a", "url": "http://provider.example/api", "auth": "********"}],
+        }
+        handler = FakeHandler(payload)
+        settings = Settings(
+            upstream_auth="provider-token",
+            admin_token="admin-secret",
+            bridge_api_key="bridge-secret",
+            upstreams=[{"id": "provider-a", "url": "http://old.example/api", "auth": "provider-token"}],
+        )
+        handler.server.settings = settings
+        saved_configs: list[dict] = []
+
+        with mock.patch("toolbridge.config_file.save_config", side_effect=saved_configs.append):
+            handle_api_settings_post(handler, settings)
+
+        self.assertEqual(handler.response_status, 200)
+        self.assertEqual(handler.server.settings.upstream_auth, "provider-token")
+        self.assertEqual(handler.server.settings.admin_token, "admin-secret")
+        self.assertEqual(handler.server.settings.bridge_api_key, "bridge-secret")
+        self.assertEqual(handler.server.settings.upstreams[0]["auth"], "provider-token")
+        self.assertEqual(saved_configs[0]["UPSTREAM_AUTH_HEADER"], "provider-token")
+        self.assertEqual(saved_configs[0]["ADMIN_TOKEN"], "admin-secret")
+        self.assertEqual(saved_configs[0]["BRIDGE_API_KEY"], "bridge-secret")
 
 
 class TestStatusRoute(unittest.TestCase):

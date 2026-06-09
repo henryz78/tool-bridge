@@ -1364,10 +1364,26 @@
             });
         }
 
+        function getAdminHeaders(extraHeaders = {}) {
+            const token = localStorage.getItem('toolbridge_admin_token') || '';
+            return token ? { ...extraHeaders, 'X-Admin-Token': token } : extraHeaders;
+        }
+
+        async function apiFetch(url, options = {}) {
+            const headers = getAdminHeaders(options.headers || {});
+            let res = await fetch(url, { ...options, headers });
+            if (res.status !== 401) return res;
+
+            const token = window.prompt('请输入 ADMIN_TOKEN 以访问管理接口');
+            if (!token) return res;
+            localStorage.setItem('toolbridge_admin_token', token.trim());
+            return fetch(url, { ...options, headers: getAdminHeaders(options.headers || {}) });
+        }
+
         // Fetch settings from server
         async function fetchSettings() {
             try {
-                const res = await fetch('/api/settings');
+                const res = await apiFetch('/api/settings');
                 if (!res.ok) throw new Error('无法连接到 API');
                 const data = await res.json();
                 
@@ -1425,7 +1441,7 @@
         // Fetch Server & Ping status
         async function fetchStatus() {
             try {
-                const res = await fetch('/api/status');
+                const res = await apiFetch('/api/status');
                 if (!res.ok) throw new Error();
                 const data = await res.json();
                 
@@ -1523,7 +1539,7 @@
             };
 
             try {
-                const res = await fetch('/api/settings', {
+                const res = await apiFetch('/api/settings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -1557,7 +1573,7 @@
                 if (providerId) {
                     url += `?provider_id=${encodeURIComponent(providerId)}`;
                 }
-                const res = await fetch(url);
+                const res = await apiFetch(url);
                 if (res.ok) {
                     const data = await res.json();
                     if (data && Array.isArray(data.data)) {
