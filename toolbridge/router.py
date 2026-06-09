@@ -555,13 +555,21 @@ def _stream_anthropic_response(handler: Any, anthropic_resp: dict, requested_mod
     emit_anthropic_message_start(handler, msg_id, requested_model, usage)
 
     for i, block in enumerate(anthropic_resp.get("content", [])):
-        emit_anthropic_content_block_start(handler, i, block)
         btype = block.get("type", "")
         if btype == "text":
+            emit_anthropic_content_block_start(handler, i, {"type": "text", "text": ""})
             emit_anthropic_content_block_delta(handler, i, {"type": "text_delta", "text": block.get("text", "")})
         elif btype == "tool_use":
+            emit_anthropic_content_block_start(handler, i, {
+                "type": "tool_use",
+                "id": block.get("id", ""),
+                "name": block.get("name", ""),
+                "input": {},
+            })
             args_json = json.dumps(block.get("input", {}), ensure_ascii=False)
             emit_anthropic_content_block_delta(handler, i, {"type": "input_json_delta", "partial_json": args_json})
+        else:
+            emit_anthropic_content_block_start(handler, i, block)
         emit_anthropic_content_block_stop(handler, i)
 
     stop = anthropic_resp.get("stop_reason", "end_turn")

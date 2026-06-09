@@ -102,15 +102,24 @@ class Settings:
         """Return (url, auth, timeout) for the given model."""
         if not model:
             return self.upstream_url, self.upstream_auth, self.upstream_timeout
-        provider_id = self.model_routes.get(model)
-        if provider_id:
-            for p in self.upstreams:
-                if p.get("id") == provider_id:
-                    return (
-                        str(p.get("url", self.upstream_url)),
-                        str(p.get("auth", self.upstream_auth)),
-                        int(p.get("timeout", self.upstream_timeout))
-                    )
+        from .model_map import strip_model_hints
+
+        clean = strip_model_hints(model)
+        route_keys = [clean]
+        for public_name, upstream_name in self.name_mapping.items():
+            if strip_model_hints(upstream_name) == clean and public_name not in route_keys:
+                route_keys.append(public_name)
+
+        for route_key in route_keys:
+            provider_id = self.model_routes.get(route_key)
+            if provider_id:
+                for p in self.upstreams:
+                    if p.get("id") == provider_id:
+                        return (
+                            str(p.get("url", self.upstream_url)),
+                            str(p.get("auth", self.upstream_auth)),
+                            int(p.get("timeout", self.upstream_timeout))
+                        )
         return self.upstream_url, self.upstream_auth, self.upstream_timeout
 
     # ------------------------------------------------------------------
@@ -175,7 +184,7 @@ class Settings:
     @classmethod
     def from_environment(cls) -> Settings:
         return cls(
-            listen_host=_env_str("HOST", "127.0.0.1"),
+            listen_host=_env_str("HOST", "0.0.0.0"),
             listen_port=_env_int("PORT", 8080),
             upstream_url=_env_str("UPSTREAM_BASE_URL", "http://127.0.0.1:3000"),
             upstream_timeout=_env_int("UPSTREAM_TIMEOUT_SECONDS", 240),
