@@ -400,7 +400,7 @@ def handle_anthropic(handler: Any, settings: Settings) -> None:
 
     if not outcome or not outcome.invocations:
         if settings.retry_on_parse_failure:
-            outcome = _retry_virtual_parse(content, marker, openai_tools, openai_payload.get("messages", []), requested_model, settings)
+            outcome = _retry_virtual_parse(content, marker, openai_tools, openai_payload.get("messages", []), resolved, settings)
 
     # Build Anthropic response directly from parsed outcome
     if outcome and outcome.invocations:

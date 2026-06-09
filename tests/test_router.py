@@ -11,6 +11,7 @@ from unittest import mock
 from toolbridge.config import Settings
 from toolbridge.errors import UpstreamError
 from toolbridge.router import dispatch, handle_chat, _stream_anthropic_response
+from toolbridge.virtual_tools import ParseOutcome, ToolInvocation
 
 
 class FakeHandler:
@@ -231,6 +232,119 @@ class TestAnthropicStreamingResponse(unittest.TestCase):
         ]
         self.assertEqual(starts[0], {"type": "text", "text": ""})
         self.assertEqual(starts[1], {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}})
+
+
+class TestAnthropicMessagesRouting(unittest.TestCase):
+    def test_invalid_json_request_returns_anthropic_error(self) -> None:
+        handler = FakeHandler({})
+        handler.rfile = io.BytesIO(b"not json")
+        handler.headers["Content-Length"] = str(len(b"not json"))
+        settings = Settings()
+
+        dispatch(handler, settings, "POST", "/v1/messages", None)
+
+        self.assertEqual(handler.response_status, 400)
+        self.assertEqual(handler.json_response(), {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": "invalid JSON body"},
+        })
+
+    def test_unknown_model_returns_anthropic_error(self) -> None:
+        handler = FakeHandler({
+            "model": "missing-model",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+        settings = Settings(name_mapping={"known-model": "provider-chat"}, allow_unmapped=False)
+
+        dispatch(handler, settings, "POST", "/v1/messages", None)
+
+        self.assertEqual(handler.response_status, 400)
+        self.assertEqual(handler.json_response(), {
+            "type": "error",
+            "error": {"type": "not_found_error", "message": "unknown model: missing-model"},
+        })
+
+    def test_virtual_tool_response_uses_anthropic_tool_blocks(self) -> None:
+        marker = "[[CALL-fixed]]"
+        handler = FakeHandler({
+            "model": "public-chat",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "lookup mars"}],
+            "tools": [{
+                "name": "lookup",
+                "description": "Lookup a value",
+                "input_schema": {"type": "object", "required": ["query"]},
+            }],
+        })
+        settings = Settings(name_mapping={"public-chat": "provider-chat"})
+        captured: dict = {}
+
+        def fake_fetch(payload: dict, _settings: Settings) -> dict:
+            captured["payload"] = payload
+            return {
+                "choices": [{
+                    "message": {
+                        "content": (
+                            f"Need lookup {marker}\n"
+                            "<<<TOOLS>>>\n"
+                            '[{"name":"lookup","params":{"query":"mars"}}]\n'
+                            "<<<END_TOOLS>>>"
+                        )
+                    }
+                }],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+            }
+
+        with mock.patch("toolbridge.router.generate_activation_marker", return_value=marker), \
+             mock.patch("toolbridge.router.fetch_upstream_chat", side_effect=fake_fetch):
+            dispatch(handler, settings, "POST", "/v1/messages", None)
+
+        response = handler.json_response()
+        self.assertEqual(handler.response_status, 200)
+        self.assertEqual(captured["payload"]["model"], "provider-chat")
+        self.assertNotIn("tools", captured["payload"])
+        self.assertIn(marker, captured["payload"]["messages"][0]["content"])
+        self.assertEqual(response["model"], "public-chat")
+        self.assertEqual(response["stop_reason"], "tool_use")
+        self.assertEqual(response["usage"], {"input_tokens": 11, "output_tokens": 7})
+        self.assertEqual(response["content"][0], {"type": "text", "text": "Need lookup"})
+        self.assertEqual(response["content"][1]["type"], "tool_use")
+        self.assertEqual(response["content"][1]["name"], "lookup")
+        self.assertEqual(response["content"][1]["input"], {"query": "mars"})
+
+    def test_retry_uses_resolved_upstream_model(self) -> None:
+        marker = "[[CALL-fixed]]"
+        handler = FakeHandler({
+            "model": "public-chat",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "lookup mars"}],
+            "tools": [{
+                "name": "lookup",
+                "description": "Lookup a value",
+                "input_schema": {"type": "object", "required": ["query"]},
+            }],
+        })
+        settings = Settings(name_mapping={"public-chat": "provider-chat"})
+        retry_call: dict = {}
+
+        def fake_retry(prior_text, marker_arg, tools, messages, resolved_model, retry_settings):
+            retry_call["resolved_model"] = resolved_model
+            return ParseOutcome(
+                text_before_marker=None,
+                invocations=[ToolInvocation(name="lookup", parameters={"query": "mars"})],
+            )
+
+        with mock.patch("toolbridge.router.generate_activation_marker", return_value=marker), \
+             mock.patch("toolbridge.router.fetch_upstream_chat", return_value={
+                 "choices": [{"message": {"content": f"{marker}\n<<<TOOLS>>>\nnot json\n<<<END_TOOLS>>>"}}],
+                 "usage": {},
+             }), \
+             mock.patch("toolbridge.router._retry_virtual_parse", side_effect=fake_retry):
+            dispatch(handler, settings, "POST", "/v1/messages", None)
+
+        self.assertEqual(handler.response_status, 200)
+        self.assertEqual(retry_call["resolved_model"], "provider-chat")
 
 
 class TestDispatchErrorHandling(unittest.TestCase):
