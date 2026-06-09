@@ -879,6 +879,8 @@ def dispatch(handler: Any, settings: Settings, method: str, path: str, body: byt
         _send_json(handler, 502, {"error": f"connection error: {exc}"})
     except BridgeError as exc:
         _send_json(handler, 500, {"error": str(exc)})
+    except json.JSONDecodeError:
+        _send_json(handler, 502, {"error": "bad gateway: invalid upstream JSON response"})
     except Exception as exc:
         _send_json(handler, 500, {"error": f"internal error: {exc}"})
 

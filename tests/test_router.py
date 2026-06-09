@@ -234,6 +234,79 @@ class TestAnthropicStreamingResponse(unittest.TestCase):
 
 
 class TestDispatchErrorHandling(unittest.TestCase):
+    def test_timeout_returns_gateway_timeout(self) -> None:
+        handler = FakeHandler({
+            "model": "public-chat",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        })
+        settings = Settings(name_mapping={"public-chat": "provider-chat"})
+
+        with mock.patch("toolbridge.router.fetch_upstream_chat", side_effect=TimeoutError("upstream timed out")):
+            dispatch(handler, settings, "POST", "/v1/chat/completions", None)
+
+        self.assertEqual(handler.response_status, 504)
+        self.assertEqual(handler.json_response(), {
+            "error": "gateway timeout: upstream timed out"
+        })
+
+    def test_connection_error_returns_bad_gateway(self) -> None:
+        handler = FakeHandler({
+            "model": "public-chat",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        })
+        settings = Settings(name_mapping={"public-chat": "provider-chat"})
+
+        with mock.patch("toolbridge.router.fetch_upstream_chat", side_effect=ConnectionError("refused")):
+            dispatch(handler, settings, "POST", "/v1/chat/completions", None)
+
+        self.assertEqual(handler.response_status, 502)
+        self.assertEqual(handler.json_response(), {
+            "error": "connection error: refused"
+        })
+
+    def test_invalid_json_request_returns_bad_request(self) -> None:
+        handler = FakeHandler({})
+        handler.rfile = io.BytesIO(b"not json")
+        handler.headers["Content-Length"] = str(len(b"not json"))
+        settings = Settings()
+
+        dispatch(handler, settings, "POST", "/v1/chat/completions", None)
+
+        self.assertEqual(handler.response_status, 400)
+        self.assertEqual(handler.json_response(), {"error": "invalid JSON body"})
+
+    def test_unknown_model_returns_bad_request(self) -> None:
+        handler = FakeHandler({
+            "model": "missing-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        })
+        settings = Settings(name_mapping={"known-model": "provider-chat"}, allow_unmapped=False)
+
+        dispatch(handler, settings, "POST", "/v1/chat/completions", None)
+
+        self.assertEqual(handler.response_status, 400)
+        self.assertEqual(handler.json_response(), {"error": "unknown model: missing-model"})
+
+    def test_upstream_invalid_json_returns_bad_gateway(self) -> None:
+        handler = FakeHandler({
+            "model": "public-chat",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        })
+        settings = Settings(name_mapping={"public-chat": "provider-chat"})
+        invalid_json = json.JSONDecodeError("Expecting value", "not json", 0)
+
+        with mock.patch("toolbridge.router.fetch_upstream_chat", side_effect=invalid_json):
+            dispatch(handler, settings, "POST", "/v1/chat/completions", None)
+
+        self.assertEqual(handler.response_status, 502)
+        self.assertEqual(handler.json_response(), {
+            "error": "bad gateway: invalid upstream JSON response"
+        })
+
     def test_upstream_json_error_preserves_status_and_body(self) -> None:
         handler = FakeHandler({
             "model": "public-chat",
