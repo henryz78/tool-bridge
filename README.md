@@ -66,8 +66,6 @@ python -m toolbridge
 ```bash
 docker build -t toolbridge .
 docker run -d \
-  -e ADMIN_TOKEN="change-me-admin-token" \
-  -e BRIDGE_API_KEY="change-me-bridge-key" \
   -e UPSTREAM_BASE_URL="https://api.deepseek.com" \
   -e UPSTREAM_AUTH_HEADER="Bearer sk-..." \
   -p 8080:8080 \
@@ -80,7 +78,9 @@ docker run -d \
 
 仓库根目录已经包含 `Dockerfile` 与 `railway.json`，Railway 从 GitHub 导入后会使用 Dockerfile 构建，并用 `/health` 做健康检查。
 
-在 Railway 的 Variables 中至少配置：
+你可以先不配置变量，直接部署后打开根域名进入控制台，再在网页里填写上游地址和安全 Token。首次设置模式下控制台可访问，但 `/v1` 代理接口会保持锁定，直到保存 `BRIDGE_API_KEY`。
+
+也可以在 Railway 的 Variables 中预先配置：
 
 ```env
 ADMIN_TOKEN=change-me-admin-token
@@ -101,7 +101,7 @@ https://your-service.up.railway.app/
 https://your-service.up.railway.app/v1
 ```
 
-Railway/Docker 镜像默认使用 `HOST=0.0.0.0` 以便公网入口能访问。公网绑定时必须配置 `ADMIN_TOKEN` 与 `BRIDGE_API_KEY`，否则服务会拒绝启动。
+Railway/Docker 镜像默认使用 `HOST=0.0.0.0` 以便公网入口能访问。两个 Token 都留空时，服务会进入首次设置模式：网页控制台可打开，代理 API 暂不可用。只配置其中一个 Token 会被视为不完整安全配置并拒绝启动。
 
 ### 方式四：桌面托盘模式 (GUI 模式)
 

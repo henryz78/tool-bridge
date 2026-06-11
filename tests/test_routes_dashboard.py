@@ -147,7 +147,7 @@ class TestSettingsRoutes(unittest.TestCase):
         self.assertEqual(saved_configs[0]["ADMIN_TOKEN"], "admin-secret")
         self.assertEqual(saved_configs[0]["BRIDGE_API_KEY"], "bridge-secret")
 
-    def test_settings_post_rejects_public_bind_without_required_tokens(self) -> None:
+    def test_settings_post_rejects_public_bind_with_partial_tokens(self) -> None:
         payload = {
             "HOST": "0.0.0.0",
             "PORT": 9876,
@@ -165,6 +165,28 @@ class TestSettingsRoutes(unittest.TestCase):
         self.assertIn("BRIDGE_API_KEY", handler.json_response()["error"])
         self.assertEqual(handler.server.settings.listen_host, "127.0.0.1")
         save_config.assert_not_called()
+
+    def test_settings_post_allows_public_bind_initial_setup_without_tokens(self) -> None:
+        payload = {
+            "HOST": "0.0.0.0",
+            "PORT": 9876,
+            "UPSTREAM_BASE_URL": "https://provider.example/api",
+            "ADMIN_TOKEN": "",
+            "BRIDGE_API_KEY": "",
+        }
+        handler = FakeHandler(payload)
+        settings = Settings(listen_host="127.0.0.1", listen_port=9876)
+        handler.server.settings = settings
+        saved_configs: list[dict] = []
+
+        with mock.patch("toolbridge.config_file.save_config", side_effect=saved_configs.append):
+            handle_api_settings_post(handler, settings)
+
+        self.assertEqual(handler.response_status, 200)
+        self.assertEqual(handler.server.settings.listen_host, "0.0.0.0")
+        self.assertEqual(handler.server.settings.admin_token, "")
+        self.assertEqual(handler.server.settings.bridge_api_key, "")
+        self.assertEqual(saved_configs[0]["HOST"], "0.0.0.0")
 
 
 class TestStatusRoute(unittest.TestCase):

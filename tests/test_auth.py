@@ -18,11 +18,14 @@ class TestPublicBindSafety(unittest.TestCase):
             with self.subTest(host=host):
                 self.assertTrue(is_public_bind_host(host))
 
-    def test_public_bind_requires_admin_and_bridge_tokens(self) -> None:
+    def test_public_bind_rejects_partial_token_configuration(self) -> None:
         settings = Settings(listen_host="0.0.0.0", admin_token="admin-secret")
 
         with self.assertRaisesRegex(ValueError, "BRIDGE_API_KEY"):
             validate_public_bind_auth(settings)
+
+    def test_public_bind_allows_missing_tokens_for_initial_setup(self) -> None:
+        validate_public_bind_auth(Settings(listen_host="0.0.0.0"))
 
     def test_public_bind_allows_both_tokens(self) -> None:
         settings = Settings(
@@ -36,14 +39,9 @@ class TestPublicBindSafety(unittest.TestCase):
     def test_loopback_bind_allows_missing_tokens(self) -> None:
         validate_public_bind_auth(Settings(listen_host="127.0.0.1"))
 
-    def test_create_server_rejects_public_bind_without_tokens(self) -> None:
-        server = None
-        try:
-            with self.assertRaisesRegex(ValueError, "ADMIN_TOKEN"):
-                server = create_server(Settings(listen_host="0.0.0.0", listen_port=0))
-        finally:
-            if server is not None:
-                server.server_close()
+    def test_create_server_allows_public_bind_for_initial_setup(self) -> None:
+        server = create_server(Settings(listen_host="0.0.0.0", listen_port=0))
+        server.server_close()
 
 
 if __name__ == "__main__":

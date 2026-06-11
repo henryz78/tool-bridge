@@ -471,6 +471,24 @@ class TestDispatchAuthentication(unittest.TestCase):
         self.assertEqual(handler.response_status, 401)
         self.assertEqual(handler.json_response(), {"error": "bridge authentication required"})
 
+    def test_public_bridge_routes_require_bridge_api_key_for_setup_mode(self) -> None:
+        handler = FakeHandler({})
+        settings = Settings(listen_host="0.0.0.0")
+
+        dispatch(handler, settings, "GET", "/v1/models", None)
+
+        self.assertEqual(handler.response_status, 401)
+        self.assertEqual(handler.json_response(), {"error": "bridge authentication required"})
+
+    def test_public_passthrough_routes_require_bridge_api_key_for_setup_mode(self) -> None:
+        handler = FakeHandler({})
+        settings = Settings(listen_host="0.0.0.0")
+
+        dispatch(handler, settings, "GET", "/custom/path", None)
+
+        self.assertEqual(handler.response_status, 401)
+        self.assertEqual(handler.json_response(), {"error": "bridge authentication required"})
+
     def test_bridge_routes_allow_matching_bearer_token(self) -> None:
         handler = FakeHandler({}, headers={"Authorization": "Bearer bridge-secret"})
         settings = Settings(bridge_api_key="bridge-secret", exposed_model_ids=["public-chat"])

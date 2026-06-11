@@ -33,6 +33,15 @@ class TestReleaseConfiguration(unittest.TestCase):
         self.assertIn("ADMIN_TOKEN=", compose)
         self.assertIn("BRIDGE_API_KEY=", compose)
 
+    def test_dashboard_exposes_security_token_inputs(self) -> None:
+        dashboard = (ROOT / "toolbridge" / "dashboard.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="admin-token"', dashboard)
+        self.assertIn('id="bridge-api-key"', dashboard)
+        self.assertIn("ADMIN_TOKEN:", dashboard)
+        self.assertIn("BRIDGE_API_KEY:", dashboard)
+        self.assertIn("result.error || '保存配置响应异常'", dashboard)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,8 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8080
-      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN is required for public binds}
-      - BRIDGE_API_KEY=${BRIDGE_API_KEY:?BRIDGE_API_KEY is required for public binds}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY:-}
       - UPSTREAM_BASE_URL=${UPSTREAM_BASE_URL:-http://127.0.0.1:3000}
       - UPSTREAM_AUTH_HEADER=${UPSTREAM_AUTH_HEADER:-}
       - UPSTREAM_TIMEOUT_SECONDS=${UPSTREAM_TIMEOUT_SECONDS:-240}

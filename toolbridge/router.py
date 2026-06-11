@@ -627,7 +627,8 @@ def dispatch(handler: Any, settings: Settings, method: str, path: str, body: byt
         if clean_path.startswith("/api/") and not admin_authorized(handler, settings):
             _send_json(handler, 401, {"error": "admin authentication required"}, cors=False)
             return
-        if (clean_path == "/v1" or clean_path.startswith("/v1/")) and not bridge_authorized(handler, settings):
+        bridge_route = clean_path == "/v1" or clean_path.startswith("/v1/") or handler_fn is None
+        if bridge_route and not bridge_authorized(handler, settings):
             _send_json(handler, 401, {"error": "bridge authentication required"})
             return
 

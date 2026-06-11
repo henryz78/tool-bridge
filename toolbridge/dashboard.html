@@ -252,6 +252,7 @@
         }
 
         input[type="text"],
+        input[type="password"],
         input[type="number"],
         textarea {
             background: var(--input-bg);
@@ -266,6 +267,7 @@
         }
 
         input[type="text"]:focus,
+        input[type="password"]:focus,
         input[type="number"]:focus,
         textarea:focus {
             outline: none;
@@ -672,6 +674,16 @@
                             <label for="port">监听端口 (PORT)</label>
                             <input type="number" id="port" required placeholder="8080">
                             <span class="help-text">代理本机的访问端口，需为有效空闲端口</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="admin-token">管理控制台 Token (ADMIN_TOKEN)</label>
+                            <input type="password" id="admin-token" placeholder="首次部署后请设置">
+                            <span class="help-text">保护控制台和 /api 管理接口；保存后再次访问会要求输入</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="bridge-api-key">代理 API Key (BRIDGE_API_KEY)</label>
+                            <input type="password" id="bridge-api-key" placeholder="客户端 Bearer Token">
+                            <span class="help-text">保护 /v1 API 与透传代理接口；客户端请求需使用 Bearer Token</span>
                         </div>
                         <div class="form-group full-width">
                             <label for="upstream-url">默认上游接口地址 (UPSTREAM_BASE_URL)</label>
@@ -1390,6 +1402,8 @@
                 // Connection inputs
                 document.getElementById('host').value = data.HOST || '127.0.0.1';
                 document.getElementById('port').value = data.PORT || 8080;
+                document.getElementById('admin-token').value = data.ADMIN_TOKEN || '';
+                document.getElementById('bridge-api-key').value = data.BRIDGE_API_KEY || '';
                 document.getElementById('upstream-url').value = data.UPSTREAM_BASE_URL || '';
                 document.getElementById('upstream-auth').value = data.UPSTREAM_AUTH_HEADER || '';
                 document.getElementById('upstream-timeout').value = data.UPSTREAM_TIMEOUT_SECONDS || 240;
@@ -1517,10 +1531,14 @@
             }
 
             const extraBody = document.getElementById('extra-body').value.trim() ? JSON.parse(document.getElementById('extra-body').value.trim()) : {};
+            const adminToken = document.getElementById('admin-token').value.trim();
+            const bridgeApiKey = document.getElementById('bridge-api-key').value.trim();
 
             const payload = {
                 HOST: document.getElementById('host').value.trim(),
                 PORT: parseInt(document.getElementById('port').value),
+                ADMIN_TOKEN: adminToken,
+                BRIDGE_API_KEY: bridgeApiKey,
                 UPSTREAM_BASE_URL: document.getElementById('upstream-url').value.trim(),
                 UPSTREAM_AUTH_HEADER: document.getElementById('upstream-auth').value.trim(),
                 UPSTREAM_TIMEOUT_SECONDS: parseInt(document.getElementById('upstream-timeout').value),
@@ -1545,10 +1563,15 @@
                     body: JSON.stringify(payload)
                 });
                 
-                if (!res.ok) throw new Error('保存配置响应异常');
-                const result = await res.json();
+                const result = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(result.error || '保存配置响应异常');
                 
                 showToast('所有配置已成功保存并立即加载！');
+                if (adminToken && adminToken !== '********') {
+                    localStorage.setItem('toolbridge_admin_token', adminToken);
+                } else if (!adminToken) {
+                    localStorage.removeItem('toolbridge_admin_token');
+                }
                 if (result.port_changed) {
                     showToast('本地监听端口已变更，服务正在重启，请使用新端口访问！', 'warning');
                 }

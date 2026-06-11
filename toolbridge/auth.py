@@ -14,6 +14,8 @@ def admin_authorized(handler: Any, settings: Settings) -> bool:
 
 
 def bridge_authorized(handler: Any, settings: Settings) -> bool:
+    if not settings.bridge_api_key and is_public_bind_host(settings.listen_host):
+        return False
     return _authorized(handler, settings.bridge_api_key, "X-Bridge-Api-Key")
 
 
@@ -44,11 +46,11 @@ def validate_public_bind_auth(settings: Settings) -> None:
         missing.append("ADMIN_TOKEN")
     if not settings.bridge_api_key:
         missing.append("BRIDGE_API_KEY")
-    if missing:
+    if 0 < len(missing) < 2:
         names = ", ".join(missing)
         raise ValueError(
-            f"Public HOST requires ADMIN_TOKEN and BRIDGE_API_KEY; missing: {names}. "
-            "Use HOST=127.0.0.1 for local-only access."
+            f"Public HOST setup is incomplete; missing: {names}. "
+            "Set both ADMIN_TOKEN and BRIDGE_API_KEY, or leave both empty for first-run setup mode."
         )
 
 
