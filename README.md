@@ -66,13 +66,44 @@ python -m toolbridge
 ```bash
 docker build -t toolbridge .
 docker run -d \
+  -e ADMIN_TOKEN="change-me-admin-token" \
+  -e BRIDGE_API_KEY="change-me-bridge-key" \
   -e UPSTREAM_BASE_URL="https://api.deepseek.com" \
   -e UPSTREAM_AUTH_HEADER="Bearer sk-..." \
   -p 8080:8080 \
   toolbridge
 ```
 
-### 方式三：桌面托盘模式 (GUI 模式)
+运行后打开 `http://localhost:8080/` 进入控制台；客户端 API Base URL 为 `http://localhost:8080/v1`。
+
+### 方式三：Railway 部署
+
+仓库根目录已经包含 `Dockerfile` 与 `railway.json`，Railway 从 GitHub 导入后会使用 Dockerfile 构建，并用 `/health` 做健康检查。
+
+在 Railway 的 Variables 中至少配置：
+
+```env
+ADMIN_TOKEN=change-me-admin-token
+BRIDGE_API_KEY=change-me-bridge-key
+UPSTREAM_BASE_URL=https://your-upstream.example.com
+UPSTREAM_AUTH_HEADER=Bearer your-upstream-key
+```
+
+部署后打开 Railway 生成的根域名即可进入控制台：
+
+```text
+https://your-service.up.railway.app/
+```
+
+客户端 API Base URL：
+
+```text
+https://your-service.up.railway.app/v1
+```
+
+Railway/Docker 镜像默认使用 `HOST=0.0.0.0` 以便公网入口能访问。公网绑定时必须配置 `ADMIN_TOKEN` 与 `BRIDGE_API_KEY`，否则服务会拒绝启动。
+
+### 方式四：桌面托盘模式 (GUI 模式)
 
 桌面 GUI 模式需要安装额外的桌面组件包（如 `customtkinter`、`pystray`、`Pillow`）：
 
